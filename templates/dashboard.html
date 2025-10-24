@@ -69,9 +69,17 @@
         .lightbox-close { position: absolute; top: 20px; right: 35px; color: #fff; font-size: 40px; font-weight: bold; cursor: pointer; transition: color 0.2s; }
         .lightbox-close:hover { color: var(--accent-color); }
         .filter-controls { display: flex; align-items: center; gap: 10px; margin-top: 15px; padding: 10px; background-color: var(--bg-primary); border-radius: 6px; }
-        .roi-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; }
-        .roi-controls { display: none; gap: 10px; align-items: center; margin-top: 10px; }
+        .roi-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; z-index: 10; pointer-events: none; }
+        .roi-canvas.active { pointer-events: all; }
+        .roi-controls { display: none; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; background-color: var(--bg-primary); padding: 10px; border-radius: 6px; }
         .roi-controls.active { display: flex; }
+        .roi-mode-indicator { font-size: 0.9em; padding: 5px 10px; border-radius: 4px; font-weight: 600; }
+        .roi-mode-main { background-color: rgba(255, 255, 0, 0.2); color: #ffff00; border: 1px solid #ffff00; }
+        .roi-mode-secondary { background-color: rgba(0, 255, 255, 0.2); color: #00ffff; border: 1px solid #00ffff; }
+        .line-editor-controls { display: none; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; background-color: var(--bg-primary); padding: 10px; border-radius: 6px; }
+        .line-editor-controls.active { display: flex; }
+        .btn-group { display: flex; gap: 5px; }
+        .btn.selected { background-color: var(--accent-color); border-color: var(--accent-color); color: white; }
         .hidden { display: none !important; }
         @media (max-width: 768px) { .layout-grid { grid-template-columns: 1fr; } }
     </style>
@@ -215,71 +223,458 @@
         shutterVideoPlayer.src = '';
     }
 
-    // --- ROI Drawing ---
+    // --- Enhanced ROI Drawing with Draggable Points ---
+    let dragState = null;
+    
     function startRoiEdit(appName, channelId) {
         const streamBox = document.getElementById(`stream-box-${appName}-${channelId}`);
         const canvas = streamBox.querySelector('.roi-canvas');
+        const img = streamBox.querySelector('img');
         const controls = streamBox.querySelector('.roi-controls');
+        
+        // Size canvas to match image
+        const resizeCanvas = () => {
+            const rect = img.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = rect.height + 'px';
+        };
+        
+        resizeCanvas();
+        const resizeHandler = () => { if (roiDrawingState[channelId]) resizeCanvas(); };
+        window.addEventListener('resize', resizeHandler);
+        
         canvas.style.display = 'block';
+        canvas.classList.add('active');
         controls.classList.add('active');
-        roiDrawingState[channelId] = { points: { main: [], secondary: [] }, currentPoly: 'main' };
+        
+        roiDrawingState[channelId] = { 
+            points: { main: [], secondary: [] }, 
+            currentPoly: 'main',
+            resizeHandler: resizeHandler
+        };
+        
+        updateModeIndicator(channelId);
         redrawRoiCanvas(appName, channelId);
     }
+    
     function cancelRoiEdit(appName, channelId) {
         const streamBox = document.getElementById(`stream-box-${appName}-${channelId}`);
-        streamBox.querySelector('.roi-canvas').style.display = 'none';
+        const canvas = streamBox.querySelector('.roi-canvas');
+        canvas.style.display = 'none';
+        canvas.classList.remove('active');
         streamBox.querySelector('.roi-controls').classList.remove('active');
+        
+        if (roiDrawingState[channelId] && roiDrawingState[channelId].resizeHandler) {
+            window.removeEventListener('resize', roiDrawingState[channelId].resizeHandler);
+        }
+        
         delete roiDrawingState[channelId];
     }
+    
     function resetRoi(appName, channelId) {
         if (roiDrawingState[channelId]) {
             roiDrawingState[channelId].points[roiDrawingState[channelId].currentPoly] = [];
             redrawRoiCanvas(appName, channelId);
         }
     }
+    
+    function clearAllRoi(appName, channelId) {
+        if (roiDrawingState[channelId]) {
+            roiDrawingState[channelId].points.main = [];
+            roiDrawingState[channelId].points.secondary = [];
+            redrawRoiCanvas(appName, channelId);
+        }
+    }
+    
+    function switchRoiMode(channelId, mode) {
+        if (roiDrawingState[channelId]) {
+            roiDrawingState[channelId].currentPoly = mode;
+            updateModeIndicator(channelId);
+            const appName = 'QueueMonitor';
+            redrawRoiCanvas(appName, channelId);
+        }
+    }
+    
+    function updateModeIndicator(channelId) {
+        const indicator = document.getElementById(`roi-mode-indicator-${channelId}`);
+        if (!indicator || !roiDrawingState[channelId]) return;
+        
+        const mode = roiDrawingState[channelId].currentPoly;
+        indicator.textContent = mode === 'main' ? 'Drawing: Queue Area (Yellow)' : 'Drawing: Counter Area (Cyan)';
+        indicator.className = 'roi-mode-indicator ' + (mode === 'main' ? 'roi-mode-main' : 'roi-mode-secondary');
+    }
+    
     async function saveRoi(appName, channelId) {
         const state = roiDrawingState[channelId];
         if (!state) return;
+        
+        if (state.points.main.length < 3 && state.points.secondary.length < 3) {
+            alert('Please draw at least one ROI area (minimum 3 points)');
+            return;
+        }
+        
         const canvas = document.getElementById(`stream-box-${appName}-${channelId}`).querySelector('.roi-canvas');
         const normalizedPoints = {
             main: state.points.main.map(p => [p.x / canvas.width, p.y / canvas.height]),
             secondary: state.points.secondary.map(p => [p.x / canvas.width, p.y / canvas.height])
         };
+        
         const response = await fetch('/api/set_roi', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ app_name: appName, channel_id: channelId, roi_points: normalizedPoints })
         });
+        
         const result = await response.json();
         alert(result.success ? 'ROI saved successfully!' : `Error: ${result.error}`);
         if(result.success) cancelRoiEdit(appName, channelId);
     }
+    
     function handleCanvasClick(event, appName, channelId) {
         const state = roiDrawingState[channelId];
         if (!state) return;
+        
         const canvas = event.target;
         const rect = canvas.getBoundingClientRect();
-        state.points[state.currentPoly].push({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        
+        const clickedPoint = findNearestPoint(state, x, y, 10);
+        if (clickedPoint) return;
+        
+        const currentPoints = state.points[state.currentPoly];
+        if (currentPoints.length >= 4) {
+            alert(`${state.currentPoly === 'main' ? 'Queue' : 'Counter'} area complete (4 points). Switch to other area or drag points to edit.`);
+            return;
+        }
+        
+        currentPoints.push({ x, y });
         redrawRoiCanvas(appName, channelId);
+        
+        if (currentPoints.length === 4) {
+            if (state.currentPoly === 'main' && state.points.secondary.length < 4) {
+                setTimeout(() => {
+                    switchRoiMode(channelId, 'secondary');
+                    alert('Queue area complete! Now draw Counter area (cyan)');
+                }, 500);
+            }
+        }
     }
+    
+    function handleCanvasMouseDown(event, appName, channelId) {
+        const state = roiDrawingState[channelId];
+        if (!state) return;
+        
+        const canvas = event.target;
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        
+        const clickedPoint = findNearestPoint(state, x, y, 10);
+        if (clickedPoint) {
+            dragState = { channelId, appName, poly: clickedPoint.poly, index: clickedPoint.index, canvas };
+            canvas.style.cursor = 'move';
+        }
+    }
+    
+    function handleCanvasMouseMove(event, appName, channelId) {
+        const state = roiDrawingState[channelId];
+        if (!state) return;
+        
+        const canvas = event.target;
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        
+        if (!dragState) {
+            const nearPoint = findNearestPoint(state, x, y, 10);
+            canvas.style.cursor = nearPoint ? 'move' : 'crosshair';
+        }
+        
+        if (dragState && dragState.channelId === channelId) {
+            const points = state.points[dragState.poly];
+            points[dragState.index] = { x, y };
+            redrawRoiCanvas(appName, channelId);
+        }
+    }
+    
+    function handleCanvasMouseUp(event, appName, channelId) {
+        if (dragState && dragState.channelId === channelId) {
+            dragState.canvas.style.cursor = 'crosshair';
+            dragState = null;
+        }
+    }
+    
+    function findNearestPoint(state, x, y, threshold) {
+        for (const polyType of ['main', 'secondary']) {
+            const points = state.points[polyType];
+            for (let i = 0; i < points.length; i++) {
+                const p = points[i];
+                const dist = Math.sqrt((p.x - x) ** 2 + (p.y - y) ** 2);
+                if (dist <= threshold) return { poly: polyType, index: i };
+            }
+        }
+        return null;
+    }
+    
     function redrawRoiCanvas(appName, channelId) {
         const state = roiDrawingState[channelId];
         if (!state) return;
+        
         const canvas = document.getElementById(`stream-box-${appName}-${channelId}`).querySelector('.roi-canvas');
         const ctx = canvas.getContext('2d');
+        
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        drawPolygon(ctx, state.points.main, 'rgba(255, 255, 0, 0.8)', 'rgba(255, 255, 0, 0.2)');
-        drawPolygon(ctx, state.points.secondary, 'rgba(0, 255, 255, 0.8)', 'rgba(0, 255, 255, 0.2)');
+        drawPolygon(ctx, state.points.main, 'rgba(255, 255, 0, 0.9)', 'rgba(255, 255, 0, 0.15)', state.currentPoly === 'main');
+        drawPolygon(ctx, state.points.secondary, 'rgba(0, 255, 255, 0.9)', 'rgba(0, 255, 255, 0.15)', state.currentPoly === 'secondary');
     }
-    function drawPolygon(ctx, points, strokeColor, fillColor) {
+    
+    function drawPolygon(ctx, points, strokeColor, fillColor, isActive) {
         if (points.length === 0) return;
+        
+        if (points.length > 1) {
+            ctx.beginPath();
+            ctx.moveTo(points[0].x, points[0].y);
+            for (let i = 1; i < points.length; i++) {
+                ctx.lineTo(points[i].x, points[i].y);
+            }
+            
+            if (points.length >= 4) {
+                ctx.closePath();
+                ctx.fillStyle = fillColor;
+                ctx.fill();
+            }
+            
+            ctx.strokeStyle = strokeColor;
+            ctx.lineWidth = isActive ? 3 : 2;
+            ctx.stroke();
+        }
+        
+        points.forEach((p, idx) => {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, isActive ? 6 : 5, 0, 2 * Math.PI);
+            ctx.fillStyle = strokeColor;
+            ctx.fill();
+            
+            ctx.fillStyle = '#000';
+            ctx.font = 'bold 12px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(idx + 1, p.x, p.y);
+        });
+    }
+
+    // --- People Counter Line Editor ---
+    let lineEditorState = {};
+    
+    function startLineEdit(appName, channelId) {
+        const streamBox = document.getElementById(`stream-box-${appName}-${channelId}`);
+        const canvas = streamBox.querySelector('.line-canvas');
+        const img = streamBox.querySelector('img');
+        const controls = streamBox.querySelector('.line-editor-controls');
+        
+        const resizeCanvas = () => {
+            const rect = img.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = rect.height + 'px';
+        };
+        
+        resizeCanvas();
+        const resizeHandler = () => { if (lineEditorState[channelId]) resizeCanvas(); };
+        window.addEventListener('resize', resizeHandler);
+        
+        canvas.style.display = 'block';
+        canvas.classList.add('active');
+        controls.classList.add('active');
+        
+        lineEditorState[channelId] = {
+            line: { start: { x: canvas.width / 2, y: 0 }, end: { x: canvas.width / 2, y: canvas.height } },
+            orientation: 'vertical',
+            dragPoint: null,
+            resizeHandler: resizeHandler
+        };
+        
+        redrawLineCanvas(appName, channelId);
+    }
+    
+    function cancelLineEdit(appName, channelId) {
+        const streamBox = document.getElementById(`stream-box-${appName}-${channelId}`);
+        const canvas = streamBox.querySelector('.line-canvas');
+        canvas.style.display = 'none';
+        canvas.classList.remove('active');
+        streamBox.querySelector('.line-editor-controls').classList.remove('active');
+        
+        if (lineEditorState[channelId] && lineEditorState[channelId].resizeHandler) {
+            window.removeEventListener('resize', lineEditorState[channelId].resizeHandler);
+        }
+        
+        delete lineEditorState[channelId];
+    }
+    
+    function setLineOrientation(channelId, orientation) {
+        const state = lineEditorState[channelId];
+        if (!state) return;
+        
+        const canvas = document.querySelector(`#stream-box-PeopleCounter-${channelId} .line-canvas`);
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        
+        state.orientation = orientation;
+        
+        if (orientation === 'vertical') {
+            state.line.start = { x: centerX, y: 0 };
+            state.line.end = { x: centerX, y: canvas.height };
+        } else if (orientation === 'horizontal') {
+            state.line.start = { x: 0, y: centerY };
+            state.line.end = { x: canvas.width, y: centerY };
+        }
+        
+        redrawLineCanvas('PeopleCounter', channelId);
+    }
+    
+    function handleLineCanvasMouseDown(event, appName, channelId) {
+        const state = lineEditorState[channelId];
+        if (!state) return;
+        
+        const canvas = event.target;
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        
+        const distStart = Math.sqrt((x - state.line.start.x) ** 2 + (y - state.line.start.y) ** 2);
+        const distEnd = Math.sqrt((x - state.line.end.x) ** 2 + (y - state.line.end.y) ** 2);
+        
+        if (distStart < 15) {
+            state.dragPoint = 'start';
+        } else if (distEnd < 15) {
+            state.dragPoint = 'end';
+        } else {
+            const distToLine = pointToLineDistance(x, y, state.line.start, state.line.end);
+            if (distToLine < 15) {
+                state.dragPoint = 'line';
+                state.dragOffset = { x: x - state.line.start.x, y: y - state.line.start.y };
+            }
+        }
+    }
+    
+    function handleLineCanvasMouseMove(event, appName, channelId) {
+        const state = lineEditorState[channelId];
+        if (!state) return;
+        
+        const canvas = event.target;
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        
+        if (state.dragPoint === 'start') {
+            state.line.start = { x, y };
+            redrawLineCanvas(appName, channelId);
+        } else if (state.dragPoint === 'end') {
+            state.line.end = { x, y };
+            redrawLineCanvas(appName, channelId);
+        } else if (state.dragPoint === 'line') {
+            const dx = x - state.dragOffset.x - state.line.start.x;
+            const dy = y - state.dragOffset.y - state.line.start.y;
+            state.line.start.x += dx;
+            state.line.start.y += dy;
+            state.line.end.x += dx;
+            state.line.end.y += dy;
+            redrawLineCanvas(appName, channelId);
+        }
+    }
+    
+    function handleLineCanvasMouseUp(event, appName, channelId) {
+        const state = lineEditorState[channelId];
+        if (state) state.dragPoint = null;
+    }
+    
+    function pointToLineDistance(px, py, lineStart, lineEnd) {
+        const dx = lineEnd.x - lineStart.x;
+        const dy = lineEnd.y - lineStart.y;
+        const length = Math.sqrt(dx * dx + dy * dy);
+        
+        if (length === 0) return Math.sqrt((px - lineStart.x) ** 2 + (py - lineStart.y) ** 2);
+        
+        const t = Math.max(0, Math.min(1, ((px - lineStart.x) * dx + (py - lineStart.y) * dy) / (length * length)));
+        const projX = lineStart.x + t * dx;
+        const projY = lineStart.y + t * dy;
+        
+        return Math.sqrt((px - projX) ** 2 + (py - projY) ** 2);
+    }
+    
+    function redrawLineCanvas(appName, channelId) {
+        const state = lineEditorState[channelId];
+        if (!state) return;
+        
+        const canvas = document.querySelector(`#stream-box-${appName}-${channelId} .line-canvas`);
+        const ctx = canvas.getContext('2d');
+        
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
         ctx.beginPath();
-        ctx.moveTo(points[0].x, points[0].y);
-        points.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
-        if (points.length > 2) ctx.closePath();
-        ctx.strokeStyle = strokeColor; ctx.lineWidth = 2; ctx.stroke();
-        ctx.fillStyle = fillColor; ctx.fill();
-        points.forEach(p => { ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, 2 * Math.PI); ctx.fillStyle = strokeColor; ctx.fill(); });
+        ctx.moveTo(state.line.start.x, state.line.start.y);
+        ctx.lineTo(state.line.end.x, state.line.end.y);
+        ctx.strokeStyle = 'rgba(0, 255, 0, 0.9)';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        
+        [state.line.start, state.line.end].forEach(point => {
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, 8, 0, 2 * Math.PI);
+            ctx.fillStyle = 'rgba(0, 255, 0, 0.9)';
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        });
+        
+        const midX = (state.line.start.x + state.line.end.x) / 2;
+        const midY = (state.line.start.y + state.line.end.y) / 2;
+        
+        ctx.font = 'bold 14px Arial';
+        ctx.fillStyle = '#fff';
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 3;
+        ctx.textAlign = 'center';
+        
+        if (state.orientation === 'vertical') {
+            ctx.strokeText('IN →', state.line.start.x + 50, 30);
+            ctx.fillText('IN →', state.line.start.x + 50, 30);
+            ctx.strokeText('← OUT', state.line.start.x - 50, 30);
+            ctx.fillText('← OUT', state.line.start.x - 50, 30);
+        } else {
+            ctx.strokeText('↑ OUT', midX, midY - 20);
+            ctx.fillText('↑ OUT', midX, midY - 20);
+            ctx.strokeText('IN ↓', midX, midY + 30);
+            ctx.fillText('IN ↓', midX, midY + 30);
+        }
+    }
+    
+    async function saveLinePosition(appName, channelId) {
+        const state = lineEditorState[channelId];
+        if (!state) return;
+        
+        const canvas = document.querySelector(`#stream-box-${appName}-${channelId} .line-canvas`);
+        
+        const normalizedLine = {
+            start: { x: state.line.start.x / canvas.width, y: state.line.start.y / canvas.height },
+            end: { x: state.line.end.x / canvas.width, y: state.line.end.y / canvas.height },
+            orientation: state.orientation
+        };
+        
+        const response = await fetch('/api/set_counting_line', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ app_name: appName, channel_id: channelId, line_config: normalizedLine })
+        });
+        
+        const result = await response.json();
+        alert(result.success ? 'Counting line saved successfully!' : `Error: ${result.error}`);
+        if(result.success) cancelLineEdit(appName, channelId);
     }
 
     // --- Report Generation ---
@@ -417,8 +812,24 @@
                             <div class="stream-box" id="stream-box-${appName}-${channel.id}">
                                 <div class="stream-header">${channel.name} - Live</div>
                                 <img src="/video_feed/${videoFeedApp}/${channel.id}" alt="Live feed">
-                                ${appName === 'QueueMonitor' ? `<canvas class="roi-canvas" style="display:none;" onclick="handleCanvasClick(event, '${appName}', '${channel.id}')"></canvas>` : ''}
+                                
+                                ${appName === 'QueueMonitor' ? `
+                                    <canvas class="roi-canvas" style="display:none;" 
+                                        onclick="handleCanvasClick(event, '${appName}', '${channel.id}')"
+                                        onmousedown="handleCanvasMouseDown(event, '${appName}', '${channel.id}')"
+                                        onmousemove="handleCanvasMouseMove(event, '${appName}', '${channel.id}')"
+                                        onmouseup="handleCanvasMouseUp(event, '${appName}', '${channel.id}')"></canvas>
+                                ` : ''}
+                                
+                                ${appName === 'PeopleCounter' ? `
+                                    <canvas class="line-canvas" style="display:none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10;" 
+                                        onmousedown="handleLineCanvasMouseDown(event, '${appName}', '${channel.id}')"
+                                        onmousemove="handleLineCanvasMouseMove(event, '${appName}', '${channel.id}')"
+                                        onmouseup="handleLineCanvasMouseUp(event, '${appName}', '${channel.id}')"></canvas>
+                                ` : ''}
+                                
                                 ${appName === 'QueueMonitor' ? `<div class="stream-footer">Queue: <span id="queue-count-${channel.id}">...</span></div>` : ''}
+                                ${appName === 'PeopleCounter' ? `<div class="stream-footer">IN: <span id="in-count-${channel.id}">...</span> | OUT: <span id="out-count-${channel.id}">...</span></div>` : ''}
                             </div>
                             <div class="report-section">
                                 <h3>Detection History</h3>
@@ -426,15 +837,44 @@
                                     <input type="date" id="start-date-${appName}-${channel.id}">
                                     <input type="date" id="end-date-${appName}-${channel.id}">
                                     <button class="btn" onclick="applyDateFilter('${appName}', '${channel.id}')">Filter</button>
-                                    ${appName === 'QueueMonitor' ? `<button class="btn" style="margin-left: auto;" onclick="startRoiEdit('${appName}', '${channel.id}')">Edit ROI</button>` : ''}
+                                    
+                                    ${appName === 'QueueMonitor' ? `
+                                        <button class="btn" style="margin-left: auto;" onclick="startRoiEdit('${appName}', '${channel.id}')">Edit ROI</button>
+                                    ` : ''}
+                                    
+                                    ${appName === 'PeopleCounter' ? `
+                                        <button class="btn" style="margin-left: auto;" onclick="startLineEdit('${appName}', '${channel.id}')">Edit Counting Line</button>
+                                    ` : ''}
                                 </div>
-                                <div class="roi-controls">
-                                    <button class="btn" onclick="roiDrawingState['${channel.id}'].currentPoly = 'main'">Draw Main</button>
-                                    <button class="btn" onclick="roiDrawingState['${channel.id}'].currentPoly = 'secondary'">Draw Secondary</button>
-                                    <button class="btn" onclick="resetRoi('${appName}', '${channel.id}')">Reset</button>
-                                    <button class="btn" onclick="cancelRoiEdit('${appName}', '${channel.id}')">Cancel</button>
-                                    <button class="btn btn-primary" onclick="saveRoi('${appName}', '${channel.id}')">Save</button>
-                                </div>
+                                
+                                ${appName === 'QueueMonitor' ? `
+                                    <div class="roi-controls">
+                                        <span id="roi-mode-indicator-${channel.id}" class="roi-mode-indicator roi-mode-main">Drawing: Queue Area (Yellow)</span>
+                                        <div class="btn-group">
+                                            <button class="btn" onclick="switchRoiMode('${channel.id}', 'main')">Draw Queue</button>
+                                            <button class="btn" onclick="switchRoiMode('${channel.id}', 'secondary')">Draw Counter</button>
+                                        </div>
+                                        <button class="btn" onclick="resetRoi('${appName}', '${channel.id}')">Reset Current</button>
+                                        <button class="btn" onclick="clearAllRoi('${appName}', '${channel.id}')">Clear All</button>
+                                        <button class="btn" onclick="cancelRoiEdit('${appName}', '${channel.id}')">Cancel</button>
+                                        <button class="btn btn-primary" onclick="saveRoi('${appName}', '${channel.id}')">Save ROI</button>
+                                    </div>
+                                ` : ''}
+                                
+                                ${appName === 'PeopleCounter' ? `
+                                    <div class="line-editor-controls">
+                                        <span style="font-weight: 600;">Line Orientation:</span>
+                                        <div class="btn-group">
+                                            <button class="btn" onclick="setLineOrientation('${channel.id}', 'vertical')">Vertical</button>
+                                            <button class="btn" onclick="setLineOrientation('${channel.id}', 'horizontal')">Horizontal</button>
+                                            <button class="btn" onclick="setLineOrientation('${channel.id}', 'angle')">Free Angle</button>
+                                        </div>
+                                        <span style="font-size: 0.85em; color: var(--text-secondary);">Drag endpoints or line to adjust</span>
+                                        <button class="btn" onclick="cancelLineEdit('${appName}', '${channel.id}')">Cancel</button>
+                                        <button class="btn btn-primary" onclick="saveLinePosition('${appName}', '${channel.id}')">Save Line</button>
+                                    </div>
+                                ` : ''}
+                                
                                 <div class="history-grid" id="grid-${appName}-${channel.id}"></div>
                                 <div class="pagination" id="pagination-${appName}-${channel.id}"></div>
                             </div>

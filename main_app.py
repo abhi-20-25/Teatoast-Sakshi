@@ -400,6 +400,38 @@ def set_roi():
             logging.error(f"Error saving ROI: {e}")
             return jsonify({"error": "Database error"}), 500
 
+@app.route('/api/set_counting_line', methods=['POST'])
+def set_counting_line():
+    data = request.json
+    channel_id, app_name, line_config = data.get('channel_id'), data.get('app_name'), data.get('line_config')
+    if not all([channel_id, app_name, isinstance(line_config, dict)]):
+        return jsonify({"error": "Missing or invalid data"}), 400
+    
+    with SessionLocal() as db:
+        try:
+            # Store line configuration in roi_configs table with special app_name
+            stmt = text("""
+                INSERT INTO roi_configs (channel_id, app_name, roi_points) VALUES (:cid, :an, :rp)
+                ON CONFLICT (channel_id, app_name) DO UPDATE SET roi_points = EXCLUDED.roi_points;
+            """)
+            db.execute(stmt, {'cid': channel_id, 'an': 'PeopleCounter_Line', 'rp': json.dumps(line_config)})
+            db.commit()
+            
+            # Update processor if needed (implement line update in processor)
+            processors = stream_processors.get(channel_id, [])
+            if app_name == 'PeopleCounter':
+                for p in processors:
+                    if isinstance(p, PeopleCounterProcessor):
+                        if hasattr(p, 'update_counting_line'):
+                            p.update_counting_line(line_config)
+                        break
+            
+            return jsonify({"success": True})
+        except Exception as e:
+            db.rollback()
+            logging.error(f"Error saving counting line: {e}")
+            return jsonify({"error": "Database error"}), 500
+
 @app.route('/report/<channel_id>/<date_str>')
 def get_report(channel_id, date_str):
     try: report_date = datetime.strptime(date_str, '%Y-%m-%d').date()
