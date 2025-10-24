@@ -89,9 +89,35 @@ class QueueMonitorProcessor(threading.Thread):
             return jpeg.tobytes() if success else b''
 
     def run(self):
-        cap = cv2.VideoCapture(self.rtsp_url)
-        if not cap.isOpened():
-            logging.error(f"Could not open QueueMonitor stream for {self.channel_name}")
+        # Check for test mode
+        import os
+        use_placeholder = os.environ.get('USE_PLACEHOLDER_FEED', 'false').lower() == 'true'
+        
+        if not use_placeholder:
+            os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp|timeout;5000000'
+            cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+            
+            if not cap.isOpened():
+                logging.warning(f"Could not open QueueMonitor stream for {self.channel_name}, using placeholder")
+                use_placeholder = True
+            else:
+                is_file = any(self.rtsp_url.lower().endswith(ext) for ext in ['.mp4', '.avi', '.mov'])
+        
+        if use_placeholder:
+            logging.info(f"Using placeholder feed for QueueMonitor {self.channel_name}")
+            frame_counter = 0
+            while self.is_running:
+                frame = np.full((480, 640, 3), (22, 27, 34), dtype=np.uint8)
+                cv2.putText(frame, f'{self.channel_name}', (180, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (201, 209, 217), 2)
+                cv2.putText(frame, f'Camera Offline - Test Mode', (120, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 150, 255), 2)
+                cv2.putText(frame, f'Queue: {self.current_queue_count}', (230, 290), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                
+                with self.lock:
+                    self.latest_frame = frame
+                frame_counter += 1
+                time.sleep(0.1)
             return
 
         is_file = any(self.rtsp_url.lower().endswith(ext) for ext in ['.mp4', '.avi', '.mov'])

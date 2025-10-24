@@ -6,6 +6,7 @@ from collections import defaultdict
 import logging
 import pytz
 import numpy as np
+import os
 from sqlalchemy import Column, Integer, String, Date, UniqueConstraint, text, DateTime
 from sqlalchemy.orm import declarative_base
 
@@ -146,9 +147,43 @@ class PeopleCounterProcessor(threading.Thread):
             self.last_saved_hour = datetime.now(IST).hour
 
     def run(self):
-        cap = cv2.VideoCapture(self.rtsp_url)
-        if not cap.isOpened():
-            logging.error(f"Could not open PeopleCounter stream for {self.channel_name}")
+        # Check for test mode with placeholder frames
+        use_placeholder = os.environ.get('USE_PLACEHOLDER_FEED', 'false').lower() == 'true'
+        
+        if not use_placeholder:
+            # Set OpenCV timeout for RTSP streams
+            os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp|timeout;5000000'
+            cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+            
+            # If can't connect after quick attempt, switch to placeholder mode
+            if not cap.isOpened():
+                logging.warning(f"Could not open PeopleCounter stream for {self.channel_name}, using placeholder")
+                use_placeholder = True
+            else:
+                is_file = any(self.rtsp_url.lower().endswith(ext) for ext in ['.mp4', '.avi', '.mov'])
+        
+        if use_placeholder:
+            # Generate placeholder frames with test pattern
+            logging.info(f"Using placeholder feed for {self.channel_name}")
+            frame_counter = 0
+            while self.is_running:
+                frame = np.full((480, 640, 3), (22, 27, 34), dtype=np.uint8)
+                cv2.putText(frame, f'{self.channel_name}', (180, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (201, 209, 217), 2)
+                cv2.putText(frame, f'Camera Offline - Test Mode', (120, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 150, 255), 2)
+                cv2.putText(frame, f'Frame: {frame_counter}', (230, 290), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
+                
+                line_x = int(frame.shape[1] * 0.5)
+                cv2.line(frame, (line_x, 0), (line_x, frame.shape[0]), (0, 255, 0), 2)
+                cv2.putText(frame, f"IN: {self.counts['in']}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                cv2.putText(frame, f"OUT: {self.counts['out']}", (50, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+                
+                with self.lock:
+                    self.latest_frame = frame
+                
+                frame_counter += 1
+                time.sleep(0.1)  # 10 FPS for placeholder
             return
 
         is_file = any(self.rtsp_url.lower().endswith(ext) for ext in ['.mp4', '.avi', '.mov'])

@@ -25,10 +25,9 @@ services:
       context: .
       dockerfile: docker/Dockerfile.main
     container_name: sakshi-main-app
-    ports:
-      - "5001:5001"
+    network_mode: "host"
     environment:
-      - DATABASE_URL=postgresql+psycopg2://postgres:Tneural01@postgres:5432/sakshi
+      - DATABASE_URL=postgresql+psycopg2://postgres:Tneural01@localhost:5433/sakshi
       - TELEGRAM_BOT_TOKEN=7843300957:AAGVv866cPiDPVD0Wrk_wwEEHDSD64Pgaqs
       - TELEGRAM_CHAT_ID=-4835836048
       - DOCKER_MODE=true
@@ -40,8 +39,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    networks:
-      - sakshi-network
     restart: unless-stopped
 
   # Detection Processor (Shoplifting, QPOS, Generic)

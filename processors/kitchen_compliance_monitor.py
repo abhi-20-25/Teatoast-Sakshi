@@ -143,10 +143,35 @@ class KitchenComplianceProcessor(threading.Thread):
 
     def run(self):
         if self.error_message: return
-        cap = cv2.VideoCapture(self.rtsp_url)
-        if not cap.isOpened():
-            self.error_message = f"Could not open RTSP stream for {self.channel_name}"
-            logging.error(self.error_message)
+        
+        # Check for test mode
+        use_placeholder = os.environ.get('USE_PLACEHOLDER_FEED', 'false').lower() == 'true'
+        
+        if not use_placeholder:
+            os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp|timeout;5000000'
+            cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+            
+            if not cap.isOpened():
+                logging.warning(f"Could not open Kitchen stream for {self.channel_name}, using placeholder")
+                use_placeholder = True
+            else:
+                is_file = any(self.rtsp_url.lower().endswith(ext) for ext in ['.mp4', '.avi', '.mov'])
+        
+        if use_placeholder:
+            logging.info(f"Using placeholder feed for Kitchen {self.channel_name}")
+            frame_counter = 0
+            while self.is_running:
+                frame = np.full((480, 640, 3), (22, 27, 34), dtype=np.uint8)
+                cv2.putText(frame, f'{self.channel_name}', (180, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (201, 209, 217), 2)
+                cv2.putText(frame, f'Camera Offline - Test Mode', (120, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 150, 255), 2)
+                cv2.putText(frame, f'Frame: {frame_counter}', (230, 290), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
+                
+                with self.lock:
+                    self.latest_frame = frame
+                frame_counter += 1
+                time.sleep(0.1)
             return
 
         is_file = any(self.rtsp_url.lower().endswith(ext) for ext in ['.mp4', '.avi', '.mov'])

@@ -258,7 +258,7 @@ def dashboard(): return render_template('dashboard.html', app_configs=get_app_co
 @app.route('/video_feed/<app_name>/<channel_id>')
 def video_feed(app_name, channel_id):
     # Docker mode: proxy video from processor microservices
-    is_docker_mode = os.environ.get('DOCKER_MODE', 'true').lower() == 'true'
+    is_docker_mode = os.environ.get('DOCKER_MODE', 'false').lower() == 'true'
     
     if is_docker_mode:
         # Map app names to processor service ports
@@ -301,7 +301,9 @@ def video_feed(app_name, channel_id):
     
     # Traditional mode: direct access to processors
     processors = stream_processors.get(channel_id)
-    if not processors: return ("Stream not found", 404)
+    if not processors: 
+        logging.warning(f"No processors found for channel {channel_id}")
+        return ("Stream not found", 404)
     
     target_class_map = {
         'PeopleCounter': PeopleCounterProcessor, 'QueueMonitor': QueueMonitorProcessor,
@@ -313,14 +315,30 @@ def video_feed(app_name, channel_id):
     
     if target_class:
         target_processor = next((p for p in processors if isinstance(p, target_class)), None)
-        if target_processor and target_processor.is_alive():
+        if target_processor:
+            if not target_processor.is_alive():
+                logging.warning(f"Processor {app_name} for channel {channel_id} is not alive")
+                return (f"{app_name} stream not running for this channel", 503)
+            
             def gen_feed():
-                while not shutdown_event.is_set():
-                    time.sleep(0.04)
-                    frame_bytes = target_processor.get_frame()
-                    if frame_bytes:
-                        yield (b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-            return Response(gen_feed(), mimetype='multipart/x-mixed-replace; boundary=frame')
+                try:
+                    while not shutdown_event.is_set():
+                        frame_bytes = target_processor.get_frame()
+                        if frame_bytes:
+                            yield (b'--frame\r\n'
+                                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                        time.sleep(0.03)  # ~30 FPS
+                except Exception as e:
+                    logging.error(f"Error in video feed generator for {app_name}/{channel_id}: {e}")
+            
+            response = Response(gen_feed(), 
+                              mimetype='multipart/x-mixed-replace; boundary=frame',
+                              headers={'Cache-Control': 'no-cache, no-store, must-revalidate',
+                                      'Pragma': 'no-cache',
+                                      'Expires': '0'})
+            return response
+        else:
+            logging.warning(f"No processor instance found for {app_name} on channel {channel_id}")
             
     return (f"{app_name} stream not running for this channel", 404)
 
