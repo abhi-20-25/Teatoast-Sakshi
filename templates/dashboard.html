@@ -169,7 +169,7 @@
 <script>
     const appConfigs = JSON.parse('{{ app_configs|tojson|safe }}');
     const dashboardContainer = document.getElementById('dashboard-container');
-    const socket = io();
+    const socket = io(`http://${window.location.hostname}:5001`);
     let reportChart = null;
     let activeReportChannel = null;
     let currentReportData = {};
@@ -470,26 +470,51 @@
         return `${h}h ${m}m`;
     }
 
+    // --- Socket.IO Connection Handlers ---
+    socket.on('connect', () => {
+        console.log('✅ Socket.IO connected successfully');
+    });
+    
+    socket.on('disconnect', () => {
+        console.warn('⚠️ Socket.IO disconnected');
+    });
+    
+    socket.on('connect_error', (error) => {
+        console.error('❌ Socket.IO connection error:', error);
+    });
+
     // --- Socket.IO Listeners ---
     socket.on('count_update', data => {
-        document.getElementById(`in-count-${data.channel_id}`).textContent = data.in_count;
-        document.getElementById(`out-count-${data.channel_id}`).textContent = data.out_count;
+        const inEl = document.getElementById(`in-count-${data.channel_id}`);
+        const outEl = document.getElementById(`out-count-${data.channel_id}`);
+        if (inEl) inEl.textContent = data.in_count;
+        if (outEl) outEl.textContent = data.out_count;
     });
+    
     socket.on('queue_update', data => {
         const el = document.getElementById(`queue-count-${data.channel_id}`);
         if(el) el.textContent = data.count;
     });
+    
     socket.on('shutter_update', data => {
-        document.getElementById(`shutter-status-${data.channel_id}`).textContent = data.last_status.toUpperCase();
-        document.getElementById(`shutter-status-time-${data.channel_id}`).textContent = `Since ${new Date(data.last_status_time).toLocaleTimeString()}`;
-        document.getElementById(`shutter-first-open-${data.channel_id}`).textContent = data.first_open_time ? new Date(data.first_open_time).toLocaleTimeString() : 'N/A';
-        document.getElementById(`shutter-first-close-${data.channel_id}`).textContent = data.first_close_time ? new Date(data.first_close_time).toLocaleTimeString() : 'N/A';
-        document.getElementById(`shutter-total-open-${data.channel_id}`).textContent = formatDuration(data.total_open_duration_seconds);
+        const statusEl = document.getElementById(`shutter-status-${data.channel_id}`);
+        const timeEl = document.getElementById(`shutter-status-time-${data.channel_id}`);
+        const openEl = document.getElementById(`shutter-first-open-${data.channel_id}`);
+        const closeEl = document.getElementById(`shutter-first-close-${data.channel_id}`);
+        const totalEl = document.getElementById(`shutter-total-open-${data.channel_id}`);
+        
+        if (statusEl) statusEl.textContent = data.last_status.toUpperCase();
+        if (timeEl) timeEl.textContent = `Since ${new Date(data.last_status_time).toLocaleTimeString()}`;
+        if (openEl) openEl.textContent = data.first_open_time ? new Date(data.first_open_time).toLocaleTimeString() : 'N/A';
+        if (closeEl) closeEl.textContent = data.first_close_time ? new Date(data.first_close_time).toLocaleTimeString() : 'N/A';
+        if (totalEl) totalEl.textContent = formatDuration(data.total_open_duration_seconds);
     });
+    
     socket.on('new_detection', data => {
         const activeTab = document.querySelector(`#content-${data.app_name}-${data.channel_id}.active`);
         if (activeTab) fetchHistory(data.app_name, 1, data.channel_id);
     });
+    
     socket.on('security_violation', data => {
         const tbody = document.getElementById(`security-tbody-${data.channel_id}`);
         if (tbody) {

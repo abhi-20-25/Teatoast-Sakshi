@@ -28,7 +28,7 @@ from processors.heatmap_processor import HeatmapProcessor
 
 # --- Master Configuration ---
 IST = pytz.timezone('Asia/Kolkata')
-DATABASE_URL = os.environ.get('DATABASE_URL', "postgresql+psycopg2://postgres:Tneural01@localhost:5432/sakshi")
+DATABASE_URL = os.environ.get('DATABASE_URL', "postgresql+psycopg2://postgres:Tneural01@127.0.0.1:5432/sakshi")
 CONFIG_FOLDER = 'config'
 MODELS_FOLDER = 'models'
 RTSP_LINKS_FILE = os.path.join(CONFIG_FOLDER, 'rtsp_links.txt')
