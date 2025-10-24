@@ -214,17 +214,20 @@ class PeopleCounterProcessor(threading.Thread):
                     if len(history) > 1:
                         prev_x, curr_x = history[-2], history[-1]
                         if prev_x < line_x and curr_x >= line_x:
-                            self.counts['out'] += 1; count_changed = True; self.track_history.pop(track_id, None)
-                        elif prev_x > line_x and curr_x <= line_x:
                             self.counts['in'] += 1; count_changed = True; self.track_history.pop(track_id, None)
+                        elif prev_x > line_x and curr_x <= line_x:
+                            self.counts['out'] += 1; count_changed = True; self.track_history.pop(track_id, None)
                 
                 if count_changed:
                     self._update_and_log_counts()
                     self.socketio.emit('count_update', {'channel_id': self.channel_id, 'in_count': self.counts['in'], 'out_count': self.counts['out']})
 
             cv2.line(annotated_frame, (line_x, 0), (line_x, annotated_frame.shape[0]), (0, 255, 0), 2)
-            cv2.putText(annotated_frame, f"IN: {self.counts['in']}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-            cv2.putText(annotated_frame, f"OUT: {self.counts['out']}", (50, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+            cv2.putText(annotated_frame, f"IN: {self.counts['in']}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(annotated_frame, f"OUT: {self.counts['out']}", (50, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 165, 255), 2)
+            # Add directional labels
+            cv2.putText(annotated_frame, "LEFT->IN", (line_x + 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(annotated_frame, "OUT<-RIGHT", (max(10, line_x - 150), 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             
             with self.lock:
                 self.latest_frame = annotated_frame
