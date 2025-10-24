@@ -80,6 +80,8 @@
         .line-editor-controls.active { display: flex; }
         .btn-group { display: flex; gap: 5px; }
         .btn.selected { background-color: var(--accent-color); border-color: var(--accent-color); color: white; }
+        .form-input { background-color: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 4px; }
+        .form-input:focus { outline: none; border-color: var(--accent-color); }
         .hidden { display: none !important; }
         @media (max-width: 768px) { .layout-grid { grid-template-columns: 1fr; } }
     </style>
@@ -174,6 +176,151 @@
     <img id="lightbox-img" src="">
 </div>
 
+<!-- ROI Editor Modal -->
+<div id="roiEditorModal" class="modal">
+    <div class="modal-content" style="max-width: 95%; max-height: 95vh; overflow-y: auto;">
+        <div class="modal-header">
+            <h2 id="roiModalTitle">Edit ROI - Queue Monitor</h2>
+            <span class="close-btn" onclick="closeRoiModal()">&times;</span>
+        </div>
+        <div style="padding: 20px;">
+            <!-- Video Preview with Canvas -->
+            <div style="position: relative; display: inline-block; max-width: 100%; background: #000;">
+                <img id="roiModalImage" src="" alt="Video Preview" 
+                     style="max-width: 100%; height: auto; display: block;" crossorigin="anonymous">
+                <canvas id="roiModalCanvas" 
+                        style="position: absolute; top: 0; left: 0; cursor: crosshair;"
+                        onmousedown="handleModalCanvasMouseDown(event)"
+                        onmousemove="handleModalCanvasMouseMove(event)"
+                        onmouseup="handleModalCanvasMouseUp(event)"
+                        onclick="handleModalCanvasClick(event)"></canvas>
+            </div>
+            
+            <!-- Controls -->
+            <div style="margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; background: var(--bg-primary); padding: 15px; border-radius: 6px;">
+                <span id="roiModeIndicator" class="roi-mode-indicator roi-mode-main">
+                    Drawing: Queue Area (Yellow)
+                </span>
+                <div class="btn-group">
+                    <button class="btn" onclick="switchModalRoiMode('main')">Draw Queue</button>
+                    <button class="btn" onclick="switchModalRoiMode('secondary')">Draw Counter</button>
+                </div>
+                <button class="btn" onclick="resetModalRoi()">Reset Current</button>
+                <button class="btn" onclick="clearAllModalRoi()">Clear All</button>
+                <button class="btn" onclick="closeRoiModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveModalRoi()">Save ROI & Settings</button>
+            </div>
+            
+            <!-- Instructions -->
+            <div style="margin-top: 15px; padding: 12px; background-color: var(--bg-secondary); border-radius: 6px; border-left: 3px solid var(--accent-color);">
+                <strong>📐 Instructions:</strong>
+                <ul style="margin: 8px 0; padding-left: 25px; line-height: 1.6;">
+                    <li><strong>Click 4 points</strong> to define each area</li>
+                    <li><strong>Drag points</strong> to adjust position after placing</li>
+                    <li><strong>Yellow area</strong> = Queue waiting zone</li>
+                    <li><strong>Cyan area</strong> = Counter/Service area</li>
+                    <li>Polygon <strong>auto-closes</strong> after 4 points</li>
+                </ul>
+            </div>
+            
+            <!-- Queue Configuration -->
+            <div style="margin-top: 20px; padding: 20px; background-color: var(--bg-secondary); border-radius: 6px; border: 1px solid var(--border-color);">
+                <h3 style="margin-top: 0; color: var(--accent-color);">⚙️ Queue Detection Settings</h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 15px;">
+                    <div>
+                        <label style="font-weight: 600; display: block; margin-bottom: 8px;">Queue Alert Threshold:</label>
+                        <input type="number" id="queueAlertThreshold" min="1" max="50" value="2" 
+                               class="form-input" style="width: 100%; padding: 10px;"
+                               onchange="updateThresholdDisplay()">
+                        <small style="color: var(--text-secondary); display: block; margin-top: 5px;">
+                            🚨 Alert when queue has <strong>this many or more</strong> people
+                        </small>
+                    </div>
+                    <div>
+                        <label style="font-weight: 600; display: block; margin-bottom: 8px;">Counter Threshold:</label>
+                        <input type="number" id="counterThreshold" min="0" max="10" value="1" 
+                               class="form-input" style="width: 100%; padding: 10px;"
+                               onchange="updateThresholdDisplay()">
+                        <small style="color: var(--text-secondary); display: block; margin-top: 5px;">
+                            👤 Alert when counter has <strong>this many or fewer</strong> people
+                        </small>
+                    </div>
+                    <div>
+                        <label style="font-weight: 600; display: block; margin-bottom: 8px;">Dwell Time (seconds):</label>
+                        <input type="number" id="queueDwellTime" min="1" max="60" value="3" step="0.5"
+                               class="form-input" style="width: 100%; padding: 10px;">
+                        <small style="color: var(--text-secondary); display: block; margin-top: 5px;">
+                            ⏱️ Person must stay <strong>this long</strong> to be counted in queue
+                        </small>
+                    </div>
+                    <div>
+                        <label style="font-weight: 600; display: block; margin-bottom: 8px;">Alert Cooldown (seconds):</label>
+                        <input type="number" id="queueAlertCooldown" min="30" max="600" value="180"
+                               class="form-input" style="width: 100%; padding: 10px;">
+                        <small style="color: var(--text-secondary); display: block; margin-top: 5px;">
+                            🔔 Minimum <strong>time between alerts</strong> (prevents spam)
+                        </small>
+                    </div>
+                </div>
+                <div style="margin-top: 15px; padding: 15px; background-color: var(--bg-primary); border-radius: 6px; border-left: 3px solid #fbbf24;">
+                    <strong style="color: #fbbf24;">⚡ Alert Logic:</strong>
+                    <p style="margin: 10px 0 0 0; line-height: 1.6;">
+                        Alert triggers when queue has <strong id="queueThresholdDisplay" style="color: var(--accent-color);">2+</strong> people 
+                        AND counter has <strong id="counterThresholdDisplay" style="color: var(--accent-color);">≤1</strong> people.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- People Counter Line Editor Modal -->
+<div id="lineEditorModal" class="modal">
+    <div class="modal-content" style="max-width: 90%; max-height: 90vh; overflow-y: auto;">
+        <div class="modal-header">
+            <h2 id="lineModalTitle">Edit Counting Line - People Counter</h2>
+            <span class="close-btn" onclick="closeLineModal()">&times;</span>
+        </div>
+        <div style="padding: 20px;">
+            <!-- Video Preview with Canvas -->
+            <div style="position: relative; display: inline-block; max-width: 100%; background: #000;">
+                <img id="lineModalImage" src="" alt="Video Preview" 
+                     style="max-width: 100%; height: auto; display: block;" crossorigin="anonymous">
+                <canvas id="lineModalCanvas" 
+                        style="position: absolute; top: 0; left: 0; cursor: move;"
+                        onmousedown="handleLineModalMouseDown(event)"
+                        onmousemove="handleLineModalMouseMove(event)"
+                        onmouseup="handleLineModalMouseUp(event)"></canvas>
+            </div>
+            
+            <!-- Controls -->
+            <div style="margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; background: var(--bg-primary); padding: 15px; border-radius: 6px;">
+                <span style="font-weight: 600;">Line Orientation:</span>
+                <div class="btn-group">
+                    <button class="btn" onclick="setLineModalOrientation('vertical')">Vertical |</button>
+                    <button class="btn" onclick="setLineModalOrientation('horizontal')">Horizontal —</button>
+                    <button class="btn" onclick="setLineModalOrientation('angle')">Free Angle /</button>
+                </div>
+                <span style="font-size: 0.9em; color: var(--text-secondary); margin-left: auto;">Drag endpoints or line to adjust position</span>
+                <button class="btn" onclick="closeLineModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveLineModal()">Save Line Position</button>
+            </div>
+            
+            <!-- Instructions -->
+            <div style="margin-top: 15px; padding: 12px; background-color: var(--bg-secondary); border-radius: 6px; border-left: 3px solid #10b981;">
+                <strong>📏 Instructions:</strong>
+                <ul style="margin: 8px 0; padding-left: 25px; line-height: 1.6;">
+                    <li><strong>Choose orientation</strong> first (Vertical/Horizontal/Free Angle)</li>
+                    <li><strong>Drag green circles</strong> at line ends to adjust position</li>
+                    <li><strong>Drag the line itself</strong> to move it without changing angle</li>
+                    <li><strong>Direction labels</strong> show which way is IN vs OUT</li>
+                    <li>Left→Right crossing = <strong style="color: #10b981;">IN</strong>, Right→Left crossing = <strong style="color: #f59e0b;">OUT</strong></li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
     const appConfigs = JSON.parse('{{ app_configs|tojson|safe }}');
     const dashboardContainer = document.getElementById('dashboard-container');
@@ -226,37 +373,9 @@
     // --- Enhanced ROI Drawing with Draggable Points ---
     let dragState = null;
     
+    // Open ROI Editor in Modal
     function startRoiEdit(appName, channelId) {
-        const streamBox = document.getElementById(`stream-box-${appName}-${channelId}`);
-        const canvas = streamBox.querySelector('.roi-canvas');
-        const img = streamBox.querySelector('img');
-        const controls = streamBox.querySelector('.roi-controls');
-        
-        // Size canvas to match image
-        const resizeCanvas = () => {
-            const rect = img.getBoundingClientRect();
-            canvas.width = rect.width;
-            canvas.height = rect.height;
-            canvas.style.width = rect.width + 'px';
-            canvas.style.height = rect.height + 'px';
-        };
-        
-        resizeCanvas();
-        const resizeHandler = () => { if (roiDrawingState[channelId]) resizeCanvas(); };
-        window.addEventListener('resize', resizeHandler);
-        
-        canvas.style.display = 'block';
-        canvas.classList.add('active');
-        controls.classList.add('active');
-        
-        roiDrawingState[channelId] = { 
-            points: { main: [], secondary: [] }, 
-            currentPoly: 'main',
-            resizeHandler: resizeHandler
-        };
-        
-        updateModeIndicator(channelId);
-        redrawRoiCanvas(appName, channelId);
+        openRoiModal(appName, channelId);
     }
     
     function cancelRoiEdit(appName, channelId) {
@@ -469,7 +588,12 @@
     // --- People Counter Line Editor ---
     let lineEditorState = {};
     
+    // Open Line Editor in Modal
     function startLineEdit(appName, channelId) {
+        openLineModal(appName, channelId);
+    }
+    
+    function startLineEditOld(appName, channelId) {
         const streamBox = document.getElementById(`stream-box-${appName}-${channelId}`);
         const canvas = streamBox.querySelector('.line-canvas');
         const img = streamBox.querySelector('img');
@@ -675,6 +799,516 @@
         const result = await response.json();
         alert(result.success ? 'Counting line saved successfully!' : `Error: ${result.error}`);
         if(result.success) cancelLineEdit(appName, channelId);
+    }
+
+    // --- Modal ROI Editor Functions ---
+    let modalRoiState = {
+        appName: null,
+        channelId: null,
+        points: { main: [], secondary: [] },
+        currentPoly: 'main',
+        dragState: null
+    };
+
+    function openRoiModal(appName, channelId) {
+        const modal = document.getElementById('roiEditorModal');
+        const modalImage = document.getElementById('roiModalImage');
+        const canvas = document.getElementById('roiModalCanvas');
+        
+        modalImage.src = `/video_feed/${appName}/${channelId}?t=${Date.now()}`;
+        
+        modalRoiState.appName = appName;
+        modalRoiState.channelId = channelId;
+        modalRoiState.points = { main: [], secondary: [] };
+        modalRoiState.currentPoly = 'main';
+        modalRoiState.dragState = null;
+        
+        loadExistingRoi(appName, channelId);
+        loadQueueSettings(channelId);
+        
+        modalImage.onload = function() {
+            canvas.width = modalImage.clientWidth;
+            canvas.height = modalImage.clientHeight;
+            canvas.style.width = modalImage.clientWidth + 'px';
+            canvas.style.height = modalImage.clientHeight + 'px';
+            redrawModalCanvas();
+        };
+        
+        modal.style.display = 'flex';
+        modal.style.alignItems = 'center';
+        modal.style.justifyContent = 'center';
+        
+        updateModalModeIndicator();
+    }
+
+    function closeRoiModal() {
+        document.getElementById('roiEditorModal').style.display = 'none';
+        modalRoiState = { appName: null, channelId: null, points: { main: [], secondary: [] }, currentPoly: 'main', dragState: null };
+    }
+
+    async function loadExistingRoi(appName, channelId) {
+        try {
+            const response = await fetch(`/api/get_roi?app_name=${appName}&channel_id=${channelId}`);
+            if (response.ok) {
+                const data = await response.json();
+                if (data.roi_points) {
+                    const canvas = document.getElementById('roiModalCanvas');
+                    setTimeout(() => {
+                        if (data.roi_points.main && canvas.width > 0) {
+                            modalRoiState.points.main = data.roi_points.main.map(p => ({
+                                x: p[0] * canvas.width,
+                                y: p[1] * canvas.height
+                            }));
+                        }
+                        if (data.roi_points.secondary && canvas.width > 0) {
+                            modalRoiState.points.secondary = data.roi_points.secondary.map(p => ({
+                                x: p[0] * canvas.width,
+                                y: p[1] * canvas.height
+                            }));
+                        }
+                        redrawModalCanvas();
+                    }, 200);
+                }
+            }
+        } catch (error) {
+            console.error('Error loading ROI:', error);
+        }
+    }
+
+    async function loadQueueSettings(channelId) {
+        try {
+            const response = await fetch(`/api/get_queue_settings?channel_id=${channelId}`);
+            if (response.ok) {
+                const data = await response.json();
+                document.getElementById('queueAlertThreshold').value = data.queue_threshold || 2;
+                document.getElementById('counterThreshold').value = data.counter_threshold || 1;
+                document.getElementById('queueDwellTime').value = data.dwell_time || 3;
+                document.getElementById('queueAlertCooldown').value = data.alert_cooldown || 180;
+                updateThresholdDisplay();
+            }
+        } catch (error) {
+            console.error('Error loading queue settings:', error);
+        }
+    }
+
+    function updateThresholdDisplay() {
+        const queueThreshold = document.getElementById('queueAlertThreshold').value;
+        const counterThreshold = document.getElementById('counterThreshold').value;
+        document.getElementById('queueThresholdDisplay').textContent = queueThreshold + '+';
+        document.getElementById('counterThresholdDisplay').textContent = '≤' + counterThreshold;
+    }
+
+    function switchModalRoiMode(mode) {
+        modalRoiState.currentPoly = mode;
+        updateModalModeIndicator();
+        redrawModalCanvas();
+    }
+
+    function updateModalModeIndicator() {
+        const indicator = document.getElementById('roiModeIndicator');
+        if (modalRoiState.currentPoly === 'main') {
+            indicator.textContent = 'Drawing: Queue Area (Yellow)';
+            indicator.className = 'roi-mode-indicator roi-mode-main';
+        } else {
+            indicator.textContent = 'Drawing: Counter Area (Cyan)';
+            indicator.className = 'roi-mode-indicator roi-mode-secondary';
+        }
+    }
+
+    function resetModalRoi() {
+        modalRoiState.points[modalRoiState.currentPoly] = [];
+        redrawModalCanvas();
+    }
+
+    function clearAllModalRoi() {
+        modalRoiState.points.main = [];
+        modalRoiState.points.secondary = [];
+        redrawModalCanvas();
+    }
+
+    function handleModalCanvasClick(event) {
+        const canvas = event.target;
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        
+        const clickedPoint = findNearestModalPoint(x, y, 10);
+        if (clickedPoint) return;
+        
+        const currentPoints = modalRoiState.points[modalRoiState.currentPoly];
+        if (currentPoints.length >= 4) {
+            alert(`${modalRoiState.currentPoly === 'main' ? 'Queue' : 'Counter'} area complete (4 points). Switch to other area or drag points to edit.`);
+            return;
+        }
+        
+        currentPoints.push({ x, y });
+        redrawModalCanvas();
+        
+        if (currentPoints.length === 4 && modalRoiState.currentPoly === 'main' && modalRoiState.points.secondary.length < 4) {
+            setTimeout(() => {
+                switchModalRoiMode('secondary');
+                alert('Queue area complete! Now draw Counter area (cyan)');
+            }, 500);
+        }
+    }
+
+    function handleModalCanvasMouseDown(event) {
+        const canvas = event.target;
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        
+        const clickedPoint = findNearestModalPoint(x, y, 10);
+        if (clickedPoint) {
+            modalRoiState.dragState = { poly: clickedPoint.poly, index: clickedPoint.index };
+            canvas.style.cursor = 'move';
+        }
+    }
+
+    function handleModalCanvasMouseMove(event) {
+        const canvas = event.target;
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        
+        if (!modalRoiState.dragState) {
+            const nearPoint = findNearestModalPoint(x, y, 10);
+            canvas.style.cursor = nearPoint ? 'move' : 'crosshair';
+        } else {
+            const points = modalRoiState.points[modalRoiState.dragState.poly];
+            points[modalRoiState.dragState.index] = { x, y };
+            redrawModalCanvas();
+        }
+    }
+
+    function handleModalCanvasMouseUp(event) {
+        if (modalRoiState.dragState) {
+            event.target.style.cursor = 'crosshair';
+            modalRoiState.dragState = null;
+        }
+    }
+
+    function findNearestModalPoint(x, y, threshold) {
+        for (const polyType of ['main', 'secondary']) {
+            const points = modalRoiState.points[polyType];
+            for (let i = 0; i < points.length; i++) {
+                const p = points[i];
+                const dist = Math.sqrt((p.x - x) ** 2 + (p.y - y) ** 2);
+                if (dist <= threshold) return { poly: polyType, index: i };
+            }
+        }
+        return null;
+    }
+
+    function redrawModalCanvas() {
+        const canvas = document.getElementById('roiModalCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawModalPolygon(ctx, modalRoiState.points.main, 'rgba(255, 255, 0, 0.9)', 'rgba(255, 255, 0, 0.15)', modalRoiState.currentPoly === 'main');
+        drawModalPolygon(ctx, modalRoiState.points.secondary, 'rgba(0, 255, 255, 0.9)', 'rgba(0, 255, 255, 0.15)', modalRoiState.currentPoly === 'secondary');
+    }
+
+    function drawModalPolygon(ctx, points, strokeColor, fillColor, isActive) {
+        if (points.length === 0) return;
+        
+        if (points.length > 1) {
+            ctx.beginPath();
+            ctx.moveTo(points[0].x, points[0].y);
+            for (let i = 1; i < points.length; i++) {
+                ctx.lineTo(points[i].x, points[i].y);
+            }
+            
+            if (points.length >= 4) {
+                ctx.closePath();
+                ctx.fillStyle = fillColor;
+                ctx.fill();
+            }
+            
+            ctx.strokeStyle = strokeColor;
+            ctx.lineWidth = isActive ? 3 : 2;
+            ctx.stroke();
+        }
+        
+        points.forEach((p, idx) => {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, isActive ? 6 : 5, 0, 2 * Math.PI);
+            ctx.fillStyle = strokeColor;
+            ctx.fill();
+            
+            ctx.fillStyle = '#000';
+            ctx.font = 'bold 12px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(idx + 1, p.x, p.y);
+        });
+    }
+
+    async function saveModalRoi() {
+        const canvas = document.getElementById('roiModalCanvas');
+        
+        if (modalRoiState.points.main.length < 3 && modalRoiState.points.secondary.length < 3) {
+            alert('Please draw at least one ROI area (minimum 3 points)');
+            return;
+        }
+        
+        const normalizedPoints = {
+            main: modalRoiState.points.main.map(p => [p.x / canvas.width, p.y / canvas.height]),
+            secondary: modalRoiState.points.secondary.map(p => [p.x / canvas.width, p.y / canvas.height])
+        };
+        
+        const queueSettings = {
+            queue_threshold: parseInt(document.getElementById('queueAlertThreshold').value),
+            counter_threshold: parseInt(document.getElementById('counterThreshold').value),
+            dwell_time: parseFloat(document.getElementById('queueDwellTime').value),
+            alert_cooldown: parseInt(document.getElementById('queueAlertCooldown').value)
+        };
+        
+        const response = await fetch('/api/set_roi', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                app_name: modalRoiState.appName,
+                channel_id: modalRoiState.channelId,
+                roi_points: normalizedPoints,
+                queue_settings: queueSettings
+            })
+        });
+        
+        const result = await response.json();
+        alert(result.success ? 'ROI and settings saved successfully! Changes will take effect immediately.' : `Error: ${result.error}`);
+        if (result.success) closeRoiModal();
+    }
+
+    // --- Modal Line Editor Functions ---
+    let modalLineState = {
+        appName: null,
+        channelId: null,
+        line: { start: { x: 0, y: 0 }, end: { x: 0, y: 0 } },
+        orientation: 'vertical',
+        dragPoint: null
+    };
+
+    function openLineModal(appName, channelId) {
+        const modal = document.getElementById('lineEditorModal');
+        const modalImage = document.getElementById('lineModalImage');
+        const canvas = document.getElementById('lineModalCanvas');
+        
+        modalImage.src = `/video_feed/${appName}/${channelId}?t=${Date.now()}`;
+        
+        modalLineState.appName = appName;
+        modalLineState.channelId = channelId;
+        modalLineState.orientation = 'vertical';
+        modalLineState.dragPoint = null;
+        
+        modalImage.onload = function() {
+            canvas.width = modalImage.clientWidth;
+            canvas.height = modalImage.clientHeight;
+            canvas.style.width = modalImage.clientWidth + 'px';
+            canvas.style.height = modalImage.clientHeight + 'px';
+            
+            modalLineState.line = {
+                start: { x: canvas.width / 2, y: 0 },
+                end: { x: canvas.width / 2, y: canvas.height }
+            };
+            
+            loadExistingLine(appName, channelId);
+            redrawLineModalCanvas();
+        };
+        
+        modal.style.display = 'flex';
+        modal.style.alignItems = 'center';
+        modal.style.justifyContent = 'center';
+    }
+
+    function closeLineModal() {
+        document.getElementById('lineEditorModal').style.display = 'none';
+        modalLineState = { appName: null, channelId: null, line: { start: { x: 0, y: 0 }, end: { x: 0, y: 0 } }, orientation: 'vertical', dragPoint: null };
+    }
+
+    async function loadExistingLine(appName, channelId) {
+        try {
+            const response = await fetch(`/api/get_counting_line?channel_id=${channelId}`);
+            if (response.ok) {
+                const data = await response.json();
+                if (data.line_config) {
+                    const canvas = document.getElementById('lineModalCanvas');
+                    setTimeout(() => {
+                        if (canvas.width > 0) {
+                            modalLineState.line = {
+                                start: {
+                                    x: data.line_config.start.x * canvas.width,
+                                    y: data.line_config.start.y * canvas.height
+                                },
+                                end: {
+                                    x: data.line_config.end.x * canvas.width,
+                                    y: data.line_config.end.y * canvas.height
+                                }
+                            };
+                            modalLineState.orientation = data.line_config.orientation || 'vertical';
+                            redrawLineModalCanvas();
+                        }
+                    }, 200);
+                }
+            }
+        } catch (error) {
+            console.error('Error loading line config:', error);
+        }
+    }
+
+    function setLineModalOrientation(orientation) {
+        const canvas = document.getElementById('lineModalCanvas');
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        
+        modalLineState.orientation = orientation;
+        
+        if (orientation === 'vertical') {
+            modalLineState.line = {
+                start: { x: centerX, y: 0 },
+                end: { x: centerX, y: canvas.height }
+            };
+        } else if (orientation === 'horizontal') {
+            modalLineState.line = {
+                start: { x: 0, y: centerY },
+                end: { x: canvas.width, y: centerY }
+            };
+        }
+        
+        redrawLineModalCanvas();
+    }
+
+    function handleLineModalMouseDown(event) {
+        const canvas = event.target;
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        
+        const distStart = Math.sqrt((x - modalLineState.line.start.x) ** 2 + (y - modalLineState.line.start.y) ** 2);
+        const distEnd = Math.sqrt((x - modalLineState.line.end.x) ** 2 + (y - modalLineState.line.end.y) ** 2);
+        
+        if (distStart < 15) {
+            modalLineState.dragPoint = 'start';
+            canvas.style.cursor = 'move';
+        } else if (distEnd < 15) {
+            modalLineState.dragPoint = 'end';
+            canvas.style.cursor = 'move';
+        } else {
+            const distToLine = pointToLineDistance(x, y, modalLineState.line.start, modalLineState.line.end);
+            if (distToLine < 15) {
+                modalLineState.dragPoint = 'line';
+                modalLineState.dragOffset = {
+                    x: x - modalLineState.line.start.x,
+                    y: y - modalLineState.line.start.y
+                };
+                canvas.style.cursor = 'move';
+            }
+        }
+    }
+
+    function handleLineModalMouseMove(event) {
+        const canvas = event.target;
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        
+        if (modalLineState.dragPoint === 'start') {
+            modalLineState.line.start = { x, y };
+            redrawLineModalCanvas();
+        } else if (modalLineState.dragPoint === 'end') {
+            modalLineState.line.end = { x, y };
+            redrawLineModalCanvas();
+        } else if (modalLineState.dragPoint === 'line') {
+            const dx = x - modalLineState.dragOffset.x - modalLineState.line.start.x;
+            const dy = y - modalLineState.dragOffset.y - modalLineState.line.start.y;
+            modalLineState.line.start.x += dx;
+            modalLineState.line.start.y += dy;
+            modalLineState.line.end.x += dx;
+            modalLineState.line.end.y += dy;
+            redrawLineModalCanvas();
+        }
+    }
+
+    function handleLineModalMouseUp(event) {
+        if (modalLineState.dragPoint) {
+            event.target.style.cursor = 'move';
+            modalLineState.dragPoint = null;
+        }
+    }
+
+    function redrawLineModalCanvas() {
+        const canvas = document.getElementById('lineModalCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.beginPath();
+        ctx.moveTo(modalLineState.line.start.x, modalLineState.line.start.y);
+        ctx.lineTo(modalLineState.line.end.x, modalLineState.line.end.y);
+        ctx.strokeStyle = 'rgba(0, 255, 0, 0.9)';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        
+        [modalLineState.line.start, modalLineState.line.end].forEach(point => {
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, 8, 0, 2 * Math.PI);
+            ctx.fillStyle = 'rgba(0, 255, 0, 0.9)';
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        });
+        
+        const midX = (modalLineState.line.start.x + modalLineState.line.end.x) / 2;
+        const midY = (modalLineState.line.start.y + modalLineState.line.end.y) / 2;
+        
+        ctx.font = 'bold 16px Arial';
+        ctx.fillStyle = '#fff';
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 3;
+        ctx.textAlign = 'center';
+        
+        if (modalLineState.orientation === 'vertical') {
+            ctx.strokeText('IN →', modalLineState.line.start.x + 50, 30);
+            ctx.fillText('IN →', modalLineState.line.start.x + 50, 30);
+            ctx.strokeText('← OUT', modalLineState.line.start.x - 50, 30);
+            ctx.fillText('← OUT', modalLineState.line.start.x - 50, 30);
+        } else {
+            ctx.strokeText('↑ OUT', midX, midY - 20);
+            ctx.fillText('↑ OUT', midX, midY - 20);
+            ctx.strokeText('IN ↓', midX, midY + 30);
+            ctx.fillText('IN ↓', midX, midY + 30);
+        }
+    }
+
+    async function saveLineModal() {
+        const canvas = document.getElementById('lineModalCanvas');
+        
+        const normalizedLine = {
+            start: {
+                x: modalLineState.line.start.x / canvas.width,
+                y: modalLineState.line.start.y / canvas.height
+            },
+            end: {
+                x: modalLineState.line.end.x / canvas.width,
+                y: modalLineState.line.end.y / canvas.height
+            },
+            orientation: modalLineState.orientation
+        };
+        
+        const response = await fetch('/api/set_counting_line', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                app_name: modalLineState.appName,
+                channel_id: modalLineState.channelId,
+                line_config: normalizedLine
+            })
+        });
+        
+        const result = await response.json();
+        alert(result.success ? 'Counting line saved successfully! Changes will take effect immediately.' : `Error: ${result.error}`);
+        if (result.success) closeLineModal();
     }
 
     // --- Report Generation ---

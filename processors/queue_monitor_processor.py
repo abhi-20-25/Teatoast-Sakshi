@@ -15,10 +15,10 @@ from sqlalchemy.orm import declarative_base
 IST = pytz.timezone('Asia/Kolkata')
 Base = declarative_base()
 
-# --- Configuration ---
-QUEUE_DWELL_TIME_SEC = 3.0
-QUEUE_ALERT_THRESHOLD = 2
-QUEUE_ALERT_COOLDOWN_SEC = 180
+# --- Default Configuration (can be overridden per channel) ---
+DEFAULT_QUEUE_DWELL_TIME_SEC = 3.0
+DEFAULT_QUEUE_ALERT_THRESHOLD = 2
+DEFAULT_QUEUE_ALERT_COOLDOWN_SEC = 180
 
 # --- Database Table Definition ---
 class QueueLog(Base):
@@ -47,6 +47,12 @@ class QueueMonitorProcessor(threading.Thread):
 
         self.normalized_main_roi, self.normalized_secondary_roi = [], []
         self.roi_poly, self.secondary_roi_poly = Polygon(), Polygon()
+        
+        # Configurable settings (can be updated via API)
+        self.queue_dwell_time = DEFAULT_QUEUE_DWELL_TIME_SEC
+        self.queue_alert_threshold = DEFAULT_QUEUE_ALERT_THRESHOLD
+        self.counter_threshold = 1
+        self.queue_alert_cooldown = DEFAULT_QUEUE_ALERT_COOLDOWN_SEC
 
     @staticmethod
     def initialize_tables(engine):
@@ -65,6 +71,18 @@ class QueueMonitorProcessor(threading.Thread):
                 self._recalculate_polygons()
             except Exception as e:
                 logging.error(f"Error updating ROI for {self.channel_name}: {e}")
+    
+    def update_settings(self, settings):
+        """Update queue detection settings dynamically"""
+        with self.lock:
+            try:
+                self.queue_alert_threshold = settings.get('queue_threshold', DEFAULT_QUEUE_ALERT_THRESHOLD)
+                self.counter_threshold = settings.get('counter_threshold', 1)
+                self.queue_dwell_time = settings.get('dwell_time', DEFAULT_QUEUE_DWELL_TIME_SEC)
+                self.queue_alert_cooldown = settings.get('alert_cooldown', DEFAULT_QUEUE_ALERT_COOLDOWN_SEC)
+                logging.info(f"QueueMonitor {self.channel_name} settings updated: queue_threshold={self.queue_alert_threshold}, counter_threshold={self.counter_threshold}, dwell_time={self.queue_dwell_time}s, cooldown={self.queue_alert_cooldown}s")
+            except Exception as e:
+                logging.error(f"Error updating settings for {self.channel_name}: {e}")
 
     def _recalculate_polygons(self):
         if self.frame_dimensions:
@@ -83,9 +101,10 @@ class QueueMonitorProcessor(threading.Thread):
             if self.latest_frame is None:
                 placeholder = np.full((480, 640, 3), (22, 27, 34), dtype=np.uint8)
                 cv2.putText(placeholder, 'Connecting...', (180, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (201, 209, 217), 2)
-                _, jpeg = cv2.imencode('.jpg', placeholder)
+                _, jpeg = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 85])
                 return jpeg.tobytes()
-            success, jpeg = cv2.imencode('.jpg', self.latest_frame)
+            # Use lower JPEG quality for reduced lag (85 instead of default 95)
+            success, jpeg = cv2.imencode('.jpg', self.latest_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
             return jpeg.tobytes() if success else b''
 
     def run(self):
@@ -171,16 +190,16 @@ class QueueMonitorProcessor(threading.Thread):
         for track_id in list(self.queue_tracker.keys()):
             if track_id not in current_tracks_in_main_roi:
                 del self.queue_tracker[track_id]
-            elif (current_time - self.queue_tracker[track_id]['entry_time']) >= QUEUE_DWELL_TIME_SEC:
+            elif (current_time - self.queue_tracker[track_id]['entry_time']) >= self.queue_dwell_time:
                 valid_queue_count += 1
         
         if self.current_queue_count != valid_queue_count:
             self.current_queue_count = valid_queue_count
             self.socketio.emit('queue_update', {'channel_id': self.channel_id, 'count': self.current_queue_count})
 
-        if valid_queue_count > QUEUE_ALERT_THRESHOLD and people_in_secondary_roi <= 1 and (current_time - self.last_alert_time) > QUEUE_ALERT_COOLDOWN_SEC:
+        if valid_queue_count > self.queue_alert_threshold and people_in_secondary_roi <= self.counter_threshold and (current_time - self.last_alert_time) > self.queue_alert_cooldown:
             self.last_alert_time = current_time
-            alert_message = f"Queue is full ({valid_queue_count} people), but the counter is free."
+            alert_message = f"Queue is full ({valid_queue_count} people), but the counter has {people_in_secondary_roi} person(s)."
             logging.warning(f"QUEUE ALERT on {self.channel_name}: {alert_message}")
             self.send_telegram(f"🚨 Queue Alert: {self.channel_name}\n{alert_message}")
             self.handle_detection('QueueMonitor', self.channel_id, [frame], alert_message, is_gif=False)

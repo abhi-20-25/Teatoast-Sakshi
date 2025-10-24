@@ -178,6 +178,10 @@ def start_streams():
                     if roi_record := db.query(RoiConfig).filter_by(channel_id=channel_id, app_name='QueueMonitor').first():
                         try: p.update_roi(json.loads(roi_record.roi_points))
                         except json.JSONDecodeError: logging.error(f"Could not parse ROI for {channel_name}")
+                    # Load queue settings
+                    if settings_record := db.query(RoiConfig).filter_by(channel_id=channel_id, app_name='QueueSettings').first():
+                        try: p.update_settings(json.loads(settings_record.roi_points))
+                        except json.JSONDecodeError: logging.error(f"Could not parse queue settings for {channel_name}")
                 processors_to_add.append(p)
         if 'ShutterMonitor' in app_names:
             if model := load_model(APP_TASKS_CONFIG['ShutterMonitor']['model_path']):
@@ -326,8 +330,10 @@ def video_feed(app_name, channel_id):
                         frame_bytes = target_processor.get_frame()
                         if frame_bytes:
                             yield (b'--frame\r\n'
-                                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-                        time.sleep(0.03)  # ~30 FPS
+                                   b'Content-Type: image/jpeg\r\n'
+                                   b'Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\n'
+                                   b'\r\n' + frame_bytes + b'\r\n')
+                        time.sleep(0.02)  # ~50 FPS for reduced lag
                 except Exception as e:
                     logging.error(f"Error in video feed generator for {app_name}/{channel_id}: {e}")
             
@@ -375,6 +381,8 @@ def get_history(app_name):
 def set_roi():
     data = request.json
     channel_id, app_name, roi_points = data.get('channel_id'), data.get('app_name'), data.get('roi_points')
+    queue_settings = data.get('queue_settings')
+    
     if not all([channel_id, app_name, isinstance(roi_points, dict)]):
         return jsonify({"error": "Missing or invalid data"}), 400
     
@@ -385,6 +393,11 @@ def set_roi():
                 ON CONFLICT (channel_id, app_name) DO UPDATE SET roi_points = EXCLUDED.roi_points;
             """)
             db.execute(stmt, {'cid': channel_id, 'an': app_name, 'rp': json.dumps(roi_points)})
+            
+            # Save queue settings if provided
+            if queue_settings:
+                db.execute(stmt, {'cid': channel_id, 'an': 'QueueSettings', 'rp': json.dumps(queue_settings)})
+            
             db.commit()
             
             processors = stream_processors.get(channel_id, [])
@@ -392,6 +405,8 @@ def set_roi():
                 for p in processors:
                     if isinstance(p, QueueMonitorProcessor):
                         p.update_roi(roi_points)
+                        if queue_settings and hasattr(p, 'update_settings'):
+                            p.update_settings(queue_settings)
                         break
             
             return jsonify({"success": True})
@@ -399,6 +414,50 @@ def set_roi():
             db.rollback()
             logging.error(f"Error saving ROI: {e}")
             return jsonify({"error": "Database error"}), 500
+
+@app.route('/api/get_roi', methods=['GET'])
+def get_roi():
+    app_name = request.args.get('app_name')
+    channel_id = request.args.get('channel_id')
+    
+    with SessionLocal() as db:
+        try:
+            roi_record = db.query(RoiConfig).filter_by(channel_id=channel_id, app_name=app_name).first()
+            if roi_record:
+                return jsonify({"roi_points": json.loads(roi_record.roi_points)})
+            return jsonify({"roi_points": None})
+        except Exception as e:
+            logging.error(f"Error loading ROI: {e}")
+            return jsonify({"error": str(e)}), 500
+
+@app.route('/api/get_queue_settings', methods=['GET'])
+def get_queue_settings():
+    channel_id = request.args.get('channel_id')
+    
+    with SessionLocal() as db:
+        try:
+            settings_record = db.query(RoiConfig).filter_by(channel_id=channel_id, app_name='QueueSettings').first()
+            if settings_record:
+                settings = json.loads(settings_record.roi_points)
+                return jsonify(settings)
+            return jsonify({"queue_threshold": 2, "counter_threshold": 1, "dwell_time": 3.0, "alert_cooldown": 180})
+        except Exception as e:
+            logging.error(f"Error loading queue settings: {e}")
+            return jsonify({"error": str(e)}), 500
+
+@app.route('/api/get_counting_line', methods=['GET'])
+def get_counting_line():
+    channel_id = request.args.get('channel_id')
+    
+    with SessionLocal() as db:
+        try:
+            line_record = db.query(RoiConfig).filter_by(channel_id=channel_id, app_name='PeopleCounter_Line').first()
+            if line_record:
+                return jsonify({"line_config": json.loads(line_record.roi_points)})
+            return jsonify({"line_config": None})
+        except Exception as e:
+            logging.error(f"Error loading line config: {e}")
+            return jsonify({"error": str(e)}), 500
 
 @app.route('/api/set_counting_line', methods=['POST'])
 def set_counting_line():
