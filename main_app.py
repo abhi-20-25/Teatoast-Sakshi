@@ -335,7 +335,7 @@ def video_feed(app_name, channel_id):
                                    b'Content-Type: image/jpeg\r\n'
                                    b'Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\n'
                                    b'\r\n' + frame_bytes + b'\r\n')
-                        time.sleep(0.02)  # ~50 FPS for reduced lag
+                        time.sleep(0.01)  # 100 FPS for smooth real-time streaming
                 except Exception as e:
                     logging.error(f"Error in video feed generator for {app_name}/{channel_id}: {e}")
             

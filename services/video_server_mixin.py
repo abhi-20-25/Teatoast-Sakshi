@@ -28,12 +28,14 @@ def start_video_server_for_processors(processors, port):
         def gen_frames():
             while True:
                 try:
-                    time.sleep(0.04)  # ~25 FPS
+                    time.sleep(0.01)  # 100 FPS for smooth real-time streaming
                     if hasattr(processor, 'get_frame'):
                         frame_bytes = processor.get_frame()
                         if frame_bytes:
                             yield (b'--frame\r\n' 
-                                   b'Content-Type: image/jpeg\r\n\r\n' + 
+                                   b'Content-Type: image/jpeg\r\n'
+                                   b'Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\n'
+                                   b'\r\n' + 
                                    frame_bytes + b'\r\n')
                 except Exception as e:
                     logging.error(f"Error generating frame: {e}")

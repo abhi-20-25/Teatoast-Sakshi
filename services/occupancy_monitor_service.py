@@ -222,8 +222,10 @@ def video_feed(channel_id):
             frame_bytes = processor.get_frame()
             if frame_bytes:
                 yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-            time.sleep(0.033)
+                       b'Content-Type: image/jpeg\r\n'
+                       b'Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\n'
+                       b'\r\n' + frame_bytes + b'\r\n')
+            time.sleep(0.01)  # 100 FPS for smooth real-time streaming
     
     return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
