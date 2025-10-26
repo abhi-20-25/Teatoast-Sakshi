@@ -21,6 +21,7 @@ from ultralytics import YOLO
 from flask import Flask, Response, jsonify, request
 from werkzeug.utils import secure_filename
 import openpyxl
+from datetime import datetime as dt, time as dt_time
 
 # Configuration
 DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql+psycopg2://postgres:Tneural01@postgres:5432/sakshi')
@@ -46,6 +47,47 @@ processors = []
 def get_stable_channel_id(link):
     """Generate stable channel ID from RTSP link"""
     return f"cam_{hashlib.md5(link.encode()).hexdigest()[:10]}"
+
+def normalize_time_slot(time_value):
+    """
+    Normalize various time formats to H:00 format (without leading zeros)
+    Handles: datetime objects, time objects, strings like "9:00", "09:00", "9:00:00", etc.
+    Returns: "9:00", "14:00", etc.
+    """
+    if time_value is None:
+        return None
+    
+    try:
+        # If it's a datetime object
+        if isinstance(time_value, dt):
+            return f"{time_value.hour}:00"
+        
+        # If it's a time object
+        if isinstance(time_value, dt_time):
+            return f"{time_value.hour}:00"
+        
+        # If it's a string, parse it
+        time_str = str(time_value).strip()
+        
+        # Remove seconds if present (e.g., "09:00:00" -> "09:00")
+        if time_str.count(':') == 2:
+            time_str = ':'.join(time_str.split(':')[:2])
+        
+        # Parse the hour part
+        if ':' in time_str:
+            hour_str = time_str.split(':')[0]
+            hour = int(hour_str)
+            
+            # Return in H:00 format (no leading zero for single digit)
+            return f"{hour}:00"
+        
+        # If it's just a number (hour only)
+        hour = int(time_str)
+        return f"{hour}:00"
+        
+    except (ValueError, AttributeError) as e:
+        logging.warning(f"Could not parse time value '{time_value}': {e}")
+        return None
 
 def load_model(model_path):
     """Load YOLO model"""
@@ -142,22 +184,34 @@ def upload_schedule(channel_id):
         headers = [cell.value for cell in sheet[1]]
         
         schedule_data = {}
+        parsed_count = 0
+        
         for row in sheet.iter_rows(min_row=2, values_only=True):
-            time_slot = str(row[0]) if row[0] else None
+            # Normalize time slot to H:00 format
+            time_slot = normalize_time_slot(row[0])
             if not time_slot:
                 continue
             
             schedule_data[time_slot] = {}
             for col_idx, day_name in enumerate(headers[1:], start=1):
-                if col_idx < len(row) and row[col_idx]:
-                    schedule_data[time_slot][day_name] = int(row[col_idx])
+                if col_idx < len(row) and row[col_idx] is not None:
+                    try:
+                        schedule_data[time_slot][day_name] = int(row[col_idx])
+                        parsed_count += 1
+                    except (ValueError, TypeError) as e:
+                        logging.warning(f"Could not parse count for {day_name} at {time_slot}: {e}")
+        
+        logging.info(f"Parsed {len(schedule_data)} time slots with {parsed_count} entries from Excel")
         
         # Update processor schedule
         success = processor.update_schedule(schedule_data)
         os.remove(filepath)
         
         if success:
-            return jsonify({'success': True, 'message': f'Schedule uploaded for {processor.channel_name}'})
+            return jsonify({
+                'success': True, 
+                'message': f'Schedule uploaded for {processor.channel_name}! {len(schedule_data)} time slots configured.'
+            })
         else:
             return jsonify({'error': 'Failed to update schedule'}), 500
             
