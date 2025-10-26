@@ -21,6 +21,7 @@ from ultralytics import YOLO
 from flask import Flask, Response, jsonify, request
 from werkzeug.utils import secure_filename
 import openpyxl
+import csv
 from datetime import datetime as dt, time as dt_time
 
 # Configuration
@@ -88,6 +89,73 @@ def normalize_time_slot(time_value):
     except (ValueError, AttributeError) as e:
         logging.warning(f"Could not parse time value '{time_value}': {e}")
         return None
+
+def parse_csv_schedule(filepath):
+    """Parse CSV file and return schedule data"""
+    schedule_data = {}
+    parsed_count = 0
+    
+    with open(filepath, 'r', encoding='utf-8') as csvfile:
+        reader = csv.DictReader(csvfile)
+        
+        for row in reader:
+            # Get time slot from first column (usually 'Time')
+            time_key = None
+            for key in row.keys():
+                if key and key.lower().strip() in ['time', 'hour', 'slot']:
+                    time_key = key
+                    break
+            
+            if not time_key or not row[time_key]:
+                continue
+            
+            time_slot = normalize_time_slot(row[time_key])
+            if not time_slot:
+                continue
+            
+            schedule_data[time_slot] = {}
+            
+            # Parse day columns
+            for day_name, value in row.items():
+                if day_name == time_key or not day_name:
+                    continue
+                
+                if value and value.strip():
+                    try:
+                        schedule_data[time_slot][day_name] = int(value)
+                        parsed_count += 1
+                    except (ValueError, TypeError) as e:
+                        logging.warning(f"Could not parse count for {day_name} at {time_slot}: {e}")
+    
+    logging.info(f"Parsed {len(schedule_data)} time slots with {parsed_count} entries from CSV")
+    return schedule_data, parsed_count
+
+def parse_excel_schedule(filepath):
+    """Parse Excel file and return schedule data"""
+    schedule_data = {}
+    parsed_count = 0
+    
+    wb = openpyxl.load_workbook(filepath)
+    sheet = wb.active
+    headers = [cell.value for cell in sheet[1]]
+    
+    for row in sheet.iter_rows(min_row=2, values_only=True):
+        # Normalize time slot to H:00 format
+        time_slot = normalize_time_slot(row[0])
+        if not time_slot:
+            continue
+        
+        schedule_data[time_slot] = {}
+        for col_idx, day_name in enumerate(headers[1:], start=1):
+            if col_idx < len(row) and row[col_idx] is not None:
+                try:
+                    schedule_data[time_slot][day_name] = int(row[col_idx])
+                    parsed_count += 1
+                except (ValueError, TypeError) as e:
+                    logging.warning(f"Could not parse count for {day_name} at {time_slot}: {e}")
+    
+    logging.info(f"Parsed {len(schedule_data)} time slots with {parsed_count} entries from Excel")
+    return schedule_data, parsed_count
 
 def load_model(model_path):
     """Load YOLO model"""
@@ -161,13 +229,18 @@ def video_feed(channel_id):
 
 @app.route('/api/upload_schedule/<channel_id>', methods=['POST'])
 def upload_schedule(channel_id):
-    """Upload Excel schedule for a specific channel"""
+    """Upload CSV or Excel schedule for a specific channel"""
     if 'file' not in request.files:
         return jsonify({'error': 'No file provided'}), 400
     
     file = request.files['file']
-    if file.filename == '' or not file.filename.endswith('.xlsx'):
-        return jsonify({'error': 'Invalid file'}), 400
+    
+    # Accept both .xlsx and .csv files
+    is_excel = file.filename.endswith('.xlsx')
+    is_csv = file.filename.endswith('.csv')
+    
+    if file.filename == '' or not (is_excel or is_csv):
+        return jsonify({'error': 'Invalid file. Please upload .xlsx or .csv file'}), 400
     
     processor = next((p for p in processors if p.channel_id == channel_id), None)
     if not processor:
@@ -178,30 +251,13 @@ def upload_schedule(channel_id):
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
         
-        # Parse Excel
-        wb = openpyxl.load_workbook(filepath)
-        sheet = wb.active
-        headers = [cell.value for cell in sheet[1]]
-        
-        schedule_data = {}
-        parsed_count = 0
-        
-        for row in sheet.iter_rows(min_row=2, values_only=True):
-            # Normalize time slot to H:00 format
-            time_slot = normalize_time_slot(row[0])
-            if not time_slot:
-                continue
-            
-            schedule_data[time_slot] = {}
-            for col_idx, day_name in enumerate(headers[1:], start=1):
-                if col_idx < len(row) and row[col_idx] is not None:
-                    try:
-                        schedule_data[time_slot][day_name] = int(row[col_idx])
-                        parsed_count += 1
-                    except (ValueError, TypeError) as e:
-                        logging.warning(f"Could not parse count for {day_name} at {time_slot}: {e}")
-        
-        logging.info(f"Parsed {len(schedule_data)} time slots with {parsed_count} entries from Excel")
+        # Parse based on file type
+        if is_csv:
+            schedule_data, parsed_count = parse_csv_schedule(filepath)
+            file_type = "CSV"
+        else:
+            schedule_data, parsed_count = parse_excel_schedule(filepath)
+            file_type = "Excel"
         
         # Update processor schedule
         success = processor.update_schedule(schedule_data)
@@ -210,13 +266,15 @@ def upload_schedule(channel_id):
         if success:
             return jsonify({
                 'success': True, 
-                'message': f'Schedule uploaded for {processor.channel_name}! {len(schedule_data)} time slots configured.'
+                'message': f'Schedule uploaded for {processor.channel_name}! {len(schedule_data)} time slots configured from {file_type} file.'
             })
         else:
             return jsonify({'error': 'Failed to update schedule'}), 500
             
     except Exception as e:
         logging.error(f"Error uploading schedule: {e}")
+        if os.path.exists(filepath):
+            os.remove(filepath)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/reload_schedule/<channel_id>', methods=['POST'])
