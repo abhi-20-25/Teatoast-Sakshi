@@ -1,0 +1,133 @@
+╔════════════════════════════════════════════════════════════════╗
+║          📋 COPY THESE COMMANDS TO YOUR SERVER               ║
+╚════════════════════════════════════════════════════════════════╝
+
+✅ New Branch Created: feature/occupancy-monitor-production
+✅ All changes pushed to GitHub
+✅ Ready for clean server deployment
+
+════════════════════════════════════════════════════════════════
+🚀 RUN ON SERVER (Option 1 - Automated):
+════════════════════════════════════════════════════════════════
+
+cd /home/ubuntu/Sakshi-Teatoast
+git fetch origin
+git checkout feature/occupancy-monitor-production
+git pull origin feature/occupancy-monitor-production
+./DEPLOY_ON_SERVER_FINAL.sh
+
+════════════════════════════════════════════════════════════════
+🚀 RUN ON SERVER (Option 2 - Manual):
+════════════════════════════════════════════════════════════════
+
+cd /home/ubuntu/Sakshi-Teatoast
+
+git fetch origin
+git checkout feature/occupancy-monitor-production
+git pull origin feature/occupancy-monitor-production
+
+docker-compose down --remove-orphans
+docker-compose build occupancy-monitor-processor
+docker-compose up -d --remove-orphans
+
+sleep 30
+docker-compose ps
+docker-compose logs occupancy-monitor-processor | grep "Using device"
+
+════════════════════════════════════════════════════════════════
+🎯 STEP-BY-STEP EXPLANATION:
+════════════════════════════════════════════════════════════════
+
+1. cd /home/ubuntu/Sakshi-Teatoast
+   → Go to project directory
+
+2. git fetch origin
+   → Download all branches from GitHub
+
+3. git checkout feature/occupancy-monitor-production
+   → Switch to new clean branch (no conflicts!)
+
+4. git pull origin feature/occupancy-monitor-production
+   → Get latest code from new branch
+
+5. docker-compose down --remove-orphans
+   → Stop all containers and clean orphans
+
+6. docker-compose build occupancy-monitor-processor
+   → Build the Occupancy Monitor container
+
+7. docker-compose up -d --remove-orphans
+   → Start all services (including Occupancy Monitor)
+
+8. Wait 30 seconds for initialization
+
+9. Check status
+
+════════════════════════════════════════════════════════════════
+✅ EXPECTED RESULT ON SERVER:
+════════════════════════════════════════════════════════════════
+
+Container Status:
+  sakshi-postgres              (healthy)
+  sakshi-main-app              (healthy)
+  sakshi-occupancy-monitor     (running) ← NEW!
+  sakshi-people-counter        (running)
+  sakshi-queue-monitor         (running)
+  sakshi-kitchen-compliance    (running)
+
+Device Detection:
+  🎯 Using device: CPU
+
+Health Check:
+  {
+    "alive_count": 1,
+    "status": "healthy",
+    "total_count": 1
+  }
+
+════════════════════════════════════════════════════════════════
+🌐 ACCESS DASHBOARD:
+════════════════════════════════════════════════════════════════
+
+URL: http://YOUR_SERVER_IP:5001/dashboard
+
+(Get your server IP with: hostname -I)
+
+════════════════════════════════════════════════════════════════
+🐛 IF IT STILL DOESN'T WORK:
+════════════════════════════════════════════════════════════════
+
+Hard reset approach (clean slate):
+
+cd /home/ubuntu/Sakshi-Teatoast
+git fetch origin
+git checkout feature/occupancy-monitor-production
+git reset --hard origin/feature/occupancy-monitor-production
+docker-compose down --remove-orphans
+docker-compose build
+docker-compose up -d --remove-orphans
+
+════════════════════════════════════════════════════════════════
+📝 VIEW LOGS:
+════════════════════════════════════════════════════════════════
+
+# Follow logs in real-time
+docker-compose logs -f occupancy-monitor-processor
+
+# View specific issues
+docker-compose logs occupancy-monitor-processor | grep -i error
+
+# Check all services
+docker-compose logs --tail=50
+
+════════════════════════════════════════════════════════════════
+✨ DEPLOYMENT READY!
+════════════════════════════════════════════════════════════════
+
+Branch: feature/occupancy-monitor-production
+Repository: https://github.com/abhi-20-25/Sakshi-Teatoast
+
+Copy commands above and run on your server!
+
+════════════════════════════════════════════════════════════════
+
