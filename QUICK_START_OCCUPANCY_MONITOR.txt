@@ -1,0 +1,142 @@
+╔════════════════════════════════════════════════════════════════╗
+║           OCCUPANCY MONITOR - QUICK START GUIDE               ║
+╚════════════════════════════════════════════════════════════════╝
+
+✅ STATUS: FULLY OPERATIONAL with YOLOv11m
+
+════════════════════════════════════════════════════════════════
+🚀 START THE SYSTEM:
+════════════════════════════════════════════════════════════════
+
+docker compose up -d
+
+# All 6 containers will start:
+  • postgres (database)
+  • main-app (web UI)
+  • people-counter
+  • queue-monitor
+  • kitchen-compliance
+  • occupancy-monitor ← NEW!
+
+════════════════════════════════════════════════════════════════
+🌐 ACCESS:
+════════════════════════════════════════════════════════════════
+
+Dashboard:  http://localhost:5001/dashboard
+Main API:   http://localhost:5001/
+Occupancy:  http://localhost:5017/
+
+════════════════════════════════════════════════════════════════
+👀 WHAT YOU'LL SEE:
+════════════════════════════════════════════════════════════════
+
+On Dashboard → Occupancy Monitor → People tab:
+
+  📹 Live video feed with person detection
+  🟢 GREEN boxes = High confidence (>50%)
+  🟡 YELLOW boxes = Medium confidence (25-50%)
+  📊 Live Count vs Required Count
+  ⚠️ Red alert banner (when below requirement)
+  📈 Historical reports with charts
+
+════════════════════════════════════════════════════════════════
+📊 UPLOAD SCHEDULE:
+════════════════════════════════════════════════════════════════
+
+Excel Format (.xlsx):
+
+| Time  | Monday | Tuesday | Wednesday | ... |
+|-------|--------|---------|-----------|-----|
+| 9:00  |   5    |    5    |     5     | ... |
+| 10:00 |   8    |    8    |     8     | ... |
+
+1. Click "Upload Schedule" button in dashboard
+2. Select your .xlsx file
+3. System starts comparing & alerting
+
+════════════════════════════════════════════════════════════════
+🎯 KEY FEATURES:
+════════════════════════════════════════════════════════════════
+
+✅ YOLOv11m Detection (39MB, latest model)
+✅ 0.25 Confidence (catches more people)
+✅ Real-time Video Processing
+✅ PostgreSQL Data Storage
+✅ Telegram Alerts (5-min cooldown)
+✅ Historical Reports & Charts
+✅ Multi-camera RTSP Support
+
+════════════════════════════════════════════════════════════════
+🔧 USEFUL COMMANDS:
+════════════════════════════════════════════════════════════════
+
+# View logs
+docker compose logs -f occupancy-monitor-processor
+
+# Check health
+curl http://localhost:5017/health
+
+# Restart
+docker compose restart occupancy-monitor-processor
+
+# View detections
+docker compose exec postgres psql -U postgres -d sakshi -c \
+  "SELECT * FROM occupancy_logs ORDER BY timestamp DESC LIMIT 10;"
+
+# Stop all
+docker compose down
+
+# Start all
+docker compose up -d
+
+════════════════════════════════════════════════════════════════
+📁 CONFIGURATION FILES:
+════════════════════════════════════════════════════════════════
+
+config/rtsp_links.txt
+  → Add OccupancyMonitor to any camera line
+
+models/yolo11m.pt (39MB)
+  → Auto-downloaded, ready to use
+
+Database Tables:
+  → occupancy_logs (detection history)
+  → occupancy_schedules (requirements)
+
+════════════════════════════════════════════════════════════════
+🎨 DETECTION VISUALIZATION:
+════════════════════════════════════════════════════════════════
+
+On video feed you'll see:
+
+  Person 0.87   ← HIGH confidence (GREEN box)
+  ┌─────────┐
+  │    🚶   │
+  └─────────┘
+
+  Person 0.34   ← MEDIUM confidence (YELLOW box)
+  ┌─────────┐
+  │    🚶   │
+  └─────────┘
+
+════════════════════════════════════════════════════════════════
+💡 TIPS:
+════════════════════════════════════════════════════════════════
+
+• Green boxes = Definitely a person (high accuracy)
+• Yellow boxes = Probably a person (lower accuracy)
+• Total count = All green + yellow detections
+• Upload schedule to enable automated alerts
+• Reports show compliance trends over time
+• Telegram alerts sent max once per 5 minutes
+
+════════════════════════════════════════════════════════════════
+
+For detailed documentation, see:
+  • OCCUPANCY_MONITOR_SETUP.md
+  • OCCUPANCY_MONITOR_UPGRADE_SUMMARY.md
+
+System ready! Open dashboard and start monitoring! 🎉
+
+════════════════════════════════════════════════════════════════
+

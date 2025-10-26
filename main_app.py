@@ -46,7 +46,8 @@ APP_TASKS_CONFIG = {
     'Heatmap': {'model_path': os.path.join(MODELS_FOLDER, 'yolov8n.pt')},
     'QueueMonitor': {'model_path': os.path.join(MODELS_FOLDER, 'yolov8n.pt')},
     'ShutterMonitor': {'model_path': os.path.join(MODELS_FOLDER, 'shutter_model.pt')},
-    'Security': {}, 'KitchenCompliance': {}
+    'Security': {}, 'KitchenCompliance': {},
+    'OccupancyMonitor': {'model_path': os.path.join(MODELS_FOLDER, 'yolo11m.pt')}
 }
 
 # --- Flask and SocketIO Setup ---
@@ -276,7 +277,8 @@ def video_feed(app_name, channel_id):
             'Detection': 5016,
             'Shoplifting': 5016,  # Detection processor
             'QPOS': 5016,  # Detection processor
-            'Generic': 5016  # Detection processor
+            'Generic': 5016,  # Detection processor
+            'OccupancyMonitor': 5017
         }
         
         port = processor_ports.get(app_name)
@@ -578,6 +580,174 @@ def get_security_reports(channel_id):
         violations = db.query(SecurityViolation).filter_by(channel_id=channel_id).order_by(SecurityViolation.timestamp.desc()).limit(15).all()
         return jsonify([{'timestamp': v.timestamp.strftime("%Y-%m-%d %H:%M:%S"), 'message': v.message, 'details': v.details} for v in violations])
 
+@app.route('/occupancy_report/<channel_id>')
+def get_occupancy_report(channel_id):
+    """Get occupancy report with historical data"""
+    now = datetime.now(IST)
+    period = request.args.get('period', '7days')
+    start_str, end_str = request.args.get('start_date'), request.args.get('end_date')
+    
+    # Determine date range
+    if start_str and end_str:
+        try:
+            start_dt = IST.localize(datetime.strptime(start_str, '%Y-%m-%d'))
+            end_dt = IST.localize(datetime.combine(datetime.strptime(end_str, '%Y-%m-%d'), datetime.max.time()))
+        except:
+            return jsonify({"error": "Invalid date format"}), 400
+    elif period == 'today':
+        start_dt, end_dt = now.replace(hour=0, minute=0, second=0), now
+    elif period == 'yesterday':
+        yesterday = now - timedelta(days=1)
+        start_dt = yesterday.replace(hour=0, minute=0, second=0)
+        end_dt = yesterday.replace(hour=23, minute=59, second=59)
+    else:  # default 7 days
+        start_dt = now - timedelta(days=7)
+        end_dt = now
+    
+    with SessionLocal() as db:
+        from processors.occupancy_monitor_processor import OccupancyLog
+        
+        records = db.query(OccupancyLog).filter(
+            OccupancyLog.channel_id == channel_id,
+            OccupancyLog.timestamp.between(start_dt, end_dt)
+        ).order_by(OccupancyLog.timestamp).all()
+        
+        if not records:
+            return jsonify({"error": "No data found for the selected period."})
+        
+        # Prepare data for chart
+        labels = []
+        live_counts = []
+        required_counts = []
+        statuses = []
+        
+        for r in records:
+            if period in ['today', 'yesterday']:
+                labels.append(r.timestamp.strftime('%H:%M'))
+            else:
+                labels.append(r.timestamp.strftime('%d %b %H:%M'))
+            live_counts.append(r.live_count)
+            required_counts.append(r.required_count)
+            statuses.append(r.status)
+        
+        # Calculate summary statistics
+        below_count = sum(1 for s in statuses if s == 'BELOW_REQUIREMENT')
+        ok_count = sum(1 for s in statuses if s == 'OK')
+        avg_live = round(sum(live_counts) / len(live_counts), 1) if live_counts else 0
+        avg_required = round(sum(required_counts) / len(required_counts), 1) if required_counts else 0
+        
+        summary = {
+            'total_records': len(records),
+            'alerts_count': below_count,
+            'compliant_count': ok_count,
+            'avg_live_count': avg_live,
+            'avg_required_count': avg_required,
+            'compliance_rate': round((ok_count / len(records) * 100), 1) if records else 0
+        }
+        
+        return jsonify({
+            'labels': labels,
+            'live_counts': live_counts,
+            'required_counts': required_counts,
+            'statuses': statuses,
+            'summary': summary
+        })
+
+@app.route('/occupancy_schedule/<channel_id>')
+def get_occupancy_schedule(channel_id):
+    """Get the occupancy schedule for a channel"""
+    with SessionLocal() as db:
+        from processors.occupancy_monitor_processor import OccupancySchedule
+        
+        records = db.query(OccupancySchedule).filter_by(channel_id=channel_id).all()
+        
+        # Group by day and time
+        schedule = {}
+        for r in records:
+            if r.day_of_week not in schedule:
+                schedule[r.day_of_week] = {}
+            schedule[r.day_of_week][r.time_slot] = r.required_count
+        
+        return jsonify({'schedule': schedule, 'total_slots': len(records)})
+
+@app.route('/api/upload_occupancy_schedule/<channel_id>', methods=['POST'])
+def upload_occupancy_schedule(channel_id):
+    """Upload Excel schedule for occupancy monitoring"""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    
+    file = request.files['file']
+    if not file or file.filename == '' or not file.filename.endswith('.xlsx'):
+        return jsonify({'error': 'Invalid file. Please upload .xlsx file'}), 400
+    
+    try:
+        import openpyxl
+        from werkzeug.utils import secure_filename
+        import tempfile
+        
+        # Save temporarily
+        filename = secure_filename(file.filename)
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+            file.save(tmp.name)
+            tmp_path = tmp.name
+        
+        # Parse Excel
+        wb = openpyxl.load_workbook(tmp_path)
+        sheet = wb.active
+        headers = [cell.value for cell in sheet[1]]  # Row 1: Time, Monday, Tuesday...
+        
+        schedule_data = []
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            time_slot = str(row[0]) if row[0] else None
+            if not time_slot:
+                continue
+            
+            for col_idx, day_name in enumerate(headers[1:], start=1):
+                if col_idx < len(row) and row[col_idx]:
+                    try:
+                        required_count = int(row[col_idx])
+                        schedule_data.append({
+                            'channel_id': channel_id,
+                            'time_slot': time_slot,
+                            'day_of_week': day_name,
+                            'required_count': required_count
+                        })
+                    except ValueError:
+                        continue
+        
+        # Save to database
+        with SessionLocal() as db:
+            from processors.occupancy_monitor_processor import OccupancySchedule
+            
+            # Clear existing schedule for this channel
+            db.query(OccupancySchedule).filter_by(channel_id=channel_id).delete()
+            
+            # Insert new schedule
+            for item in schedule_data:
+                db.add(OccupancySchedule(**item))
+            db.commit()
+        
+        # Cleanup
+        os.remove(tmp_path)
+        
+        # Notify processor to reload schedule
+        try:
+            requests.post(
+                f"http://localhost:5017/api/reload_schedule/{channel_id}",
+                timeout=2
+            )
+        except:
+            pass  # Processor will reload on next detection anyway
+        
+        return jsonify({
+            'success': True,
+            'message': f'Schedule uploaded successfully! {len(schedule_data)} time slots configured.'
+        })
+        
+    except Exception as e:
+        logging.error(f"Error uploading occupancy schedule: {e}")
+        return jsonify({'error': str(e)}), 500
+
 # --- Microservice API Endpoints ---
 @app.route('/health')
 def health_check():
@@ -669,7 +839,8 @@ def get_app_configs():
         'KitchenCompliance': 5015,
         'Shoplifting': 5016,
         'QPOS': 5016,
-        'Generic': 5016
+        'Generic': 5016,
+        'OccupancyMonitor': 5017
     }
     
     with open(RTSP_LINKS_FILE, 'r') as f:

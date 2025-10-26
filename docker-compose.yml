@@ -130,6 +130,36 @@ services:
     #           count: 1
     #           capabilities: [gpu]
 
+  # Occupancy Monitor Processor
+  occupancy-monitor-processor:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.occupancy_monitor
+    container_name: sakshi-occupancy-monitor
+    network_mode: "host"
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://postgres:Tneural01@localhost:5433/sakshi
+      - MAIN_APP_URL=http://localhost:5001
+      - TELEGRAM_BOT_TOKEN=7843300957:AAGVv866cPiDPVD0Wrk_wwEEHDSD64Pgaqs
+      - TELEGRAM_CHAT_ID=-4835836048
+      - PROCESSOR_TYPE=occupancy_monitor
+      - USE_PLACEHOLDER_FEED=false
+    volumes:
+      - ./config:/app/config
+      - ./models:/app/models
+      - ./static:/app/static
+      - ./test-videos:/app/test-videos 
+    depends_on:
+      - main-app
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
 networks:
   sakshi-network:
     driver: bridge

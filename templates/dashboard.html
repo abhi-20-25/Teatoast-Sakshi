@@ -1435,6 +1435,89 @@
                 const channel = config.channels[0];
                 contentHTML = `<div class="layout-grid"><div class="stream-box"><div class="stream-header">${channel.name} - Live</div><img src="/video_feed/Security/${channel.id}" alt="Live feed"></div><div class="report-section"><h3>Recent Violations</h3><table id="security-table-${channel.id}"><thead><tr><th>Timestamp</th><th>Violation</th><th>Details</th></tr></thead><tbody id="security-tbody-${channel.id}"></tbody></table></div></div>`;
                 setTimeout(() => fetchSecurityViolations(channel.id), 500);
+            } else if (appName === 'OccupancyMonitor') {
+                const tabsHTML = config.channels.map((channel, i) => 
+                    `<button class="tab-button ${i === 0 ? 'active' : ''}" onclick="openTab(event, '${appName}')">${channel.name}</button>`
+                ).join('');
+                
+                const contentDivs = config.channels.map((channel, i) => `
+                    <div id="content-${appName}-${channel.id}" class="tab-content ${i === 0 ? 'active' : ''}">
+                        <div id="occupancy-alert-${channel.id}" style="display: none; background-color: #dc2626; color: white; padding: 15px; border-radius: 6px; margin-bottom: 20px; font-weight: 600;">
+                            <p id="alert-message-${channel.id}" style="margin: 0;"></p>
+                        </div>
+                        
+                        <div class="layout-grid">
+                            <div class="stream-box">
+                                <div class="stream-header">${channel.name} - Live Feed</div>
+                                <img src="/video_feed/OccupancyMonitor/${channel.id}" alt="Live feed">
+                                <div class="stream-footer">
+                                    Live: <span id="occupancy-live-${channel.id}" style="color: #10b981; font-weight: 700;">0</span> | 
+                                    Required: <span id="occupancy-required-${channel.id}" style="color: #f59e0b; font-weight: 700;">N/A</span>
+                                </div>
+                            </div>
+                            
+                            <div class="report-section">
+                                <h3>Schedule Management</h3>
+                                
+                                <div style="margin-bottom: 20px; padding: 15px; background: var(--bg-primary); border-radius: 6px;">
+                                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">📊 Upload Schedule (.xlsx):</label>
+                                    <input type="file" id="schedule-file-${channel.id}" accept=".xlsx" style="width: 100%; padding: 10px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-primary);">
+                                    <button class="btn btn-primary" style="width: 100%; margin-top: 10px;" onclick="uploadOccupancySchedule('${channel.id}')">Upload Schedule</button>
+                                    <small id="schedule-status-${channel.id}" style="display: block; margin-top: 8px; color: var(--text-secondary);">No schedule loaded</small>
+                                </div>
+                                
+                                <div class="summary-cards" style="grid-template-columns: 1fr 1fr;">
+                                    <div class="summary-card">
+                                        <h4>Current Time Slot</h4>
+                                        <p id="current-slot-${channel.id}" style="font-size: 1.1em;">--</p>
+                                    </div>
+                                    <div class="summary-card">
+                                        <h4>Status</h4>
+                                        <p id="status-${channel.id}" style="font-size: 1.1em;">--</p>
+                                    </div>
+                                </div>
+                                
+                                <div style="margin-top: 20px;">
+                                    <h3>Occupancy Reports</h3>
+                                    <div style="display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap;">
+                                        <button class="btn" onclick="generateOccupancyReport('${channel.id}', 'today')">Today</button>
+                                        <button class="btn" onclick="generateOccupancyReport('${channel.id}', 'yesterday')">Yesterday</button>
+                                        <button class="btn" onclick="generateOccupancyReport('${channel.id}', '7days')">Last 7 Days</button>
+                                    </div>
+                                    
+                                    <div id="occupancy-summary-${channel.id}" style="display: none;">
+                                        <div class="summary-cards" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));">
+                                            <div class="summary-card">
+                                                <h4>Total Records</h4>
+                                                <p id="summary-total-${channel.id}">0</p>
+                                            </div>
+                                            <div class="summary-card">
+                                                <h4>Alerts</h4>
+                                                <p id="summary-alerts-${channel.id}" style="color: #ef4444;">0</p>
+                                            </div>
+                                            <div class="summary-card">
+                                                <h4>Compliance Rate</h4>
+                                                <p id="summary-compliance-${channel.id}" style="color: #10b981;">0%</p>
+                                            </div>
+                                            <div class="summary-card">
+                                                <h4>Avg Live Count</h4>
+                                                <p id="summary-avg-live-${channel.id}">0</p>
+                                            </div>
+                                        </div>
+                                        
+                                        <div style="margin-top: 20px;">
+                                            <canvas id="occupancy-chart-${channel.id}"></canvas>
+                                        </div>
+                                    </div>
+                                    
+                                    <div id="occupancy-error-${channel.id}" style="color: #ef4444; margin-top: 10px;"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+                
+                contentHTML = `<div class="tab-nav">${tabsHTML}</div>${contentDivs}`;
             } else {
                 const videoFeedApp = (['Shoplifting', 'QPOS', 'Generic'].includes(appName)) ? 'Detection' : appName;
                 let tabsHTML = ''; let contentDivs = '';
@@ -1594,6 +1677,192 @@
         if (tbody) {
             tbody.insertAdjacentHTML('afterbegin', `<tr><td>${data.timestamp}</td><td>${data.message}</td><td>${data.details}</td></tr>`);
             if (tbody.rows.length > 15) tbody.deleteRow(-1);
+        }
+    });
+
+    // --- Occupancy Monitor Functions ---
+    let occupancyCharts = {};
+
+    async function uploadOccupancySchedule(channelId) {
+        const fileInput = document.getElementById(`schedule-file-${channelId}`);
+        const statusEl = document.getElementById(`schedule-status-${channelId}`);
+        
+        if (!fileInput.files || fileInput.files.length === 0) {
+            statusEl.textContent = 'Please select a file first';
+            statusEl.style.color = '#ef4444';
+            return;
+        }
+        
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        
+        statusEl.textContent = 'Uploading...';
+        statusEl.style.color = '#f59e0b';
+        
+        try {
+            const response = await fetch(`/api/upload_occupancy_schedule/${channelId}`, {
+                method: 'POST',
+                body: formData
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                statusEl.textContent = result.message;
+                statusEl.style.color = '#10b981';
+                fileInput.value = '';
+            } else {
+                statusEl.textContent = 'Error: ' + (result.error || 'Upload failed');
+                statusEl.style.color = '#ef4444';
+            }
+        } catch (error) {
+            statusEl.textContent = 'Error: ' + error.message;
+            statusEl.style.color = '#ef4444';
+        }
+    }
+
+    async function generateOccupancyReport(channelId, period) {
+        const errorEl = document.getElementById(`occupancy-error-${channelId}`);
+        const summaryEl = document.getElementById(`occupancy-summary-${channelId}`);
+        
+        errorEl.textContent = 'Loading report...';
+        summaryEl.style.display = 'none';
+        
+        try {
+            const response = await fetch(`/occupancy_report/${channelId}?period=${period}`);
+            const data = await response.json();
+            
+            if (data.error) {
+                errorEl.textContent = data.error;
+                return;
+            }
+            
+            errorEl.textContent = '';
+            summaryEl.style.display = 'block';
+            
+            // Update summary
+            document.getElementById(`summary-total-${channelId}`).textContent = data.summary.total_records;
+            document.getElementById(`summary-alerts-${channelId}`).textContent = data.summary.alerts_count;
+            document.getElementById(`summary-compliance-${channelId}`).textContent = data.summary.compliance_rate + '%';
+            document.getElementById(`summary-avg-live-${channelId}`).textContent = data.summary.avg_live_count;
+            
+            // Render chart
+            renderOccupancyChart(channelId, data);
+            
+        } catch (error) {
+            errorEl.textContent = 'Error loading report: ' + error.message;
+        }
+    }
+
+    function renderOccupancyChart(channelId, data) {
+        const canvasId = `occupancy-chart-${channelId}`;
+        const ctx = document.getElementById(canvasId).getContext('2d');
+        
+        // Destroy existing chart
+        if (occupancyCharts[channelId]) {
+            occupancyCharts[channelId].destroy();
+        }
+        
+        // Create new chart
+        occupancyCharts[channelId] = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.labels,
+                datasets: [
+                    {
+                        label: 'Live Count',
+                        data: data.live_counts,
+                        borderColor: 'rgba(16, 185, 129, 1)',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        tension: 0.3,
+                        fill: true
+                    },
+                    {
+                        label: 'Required Count',
+                        data: data.required_counts,
+                        borderColor: 'rgba(245, 158, 11, 1)',
+                        backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                        tension: 0.3,
+                        fill: true,
+                        borderDash: [5, 5]
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(201, 209, 217, 0.1)' },
+                        ticks: { color: 'var(--text-secondary)' }
+                    },
+                    x: {
+                        grid: { color: 'rgba(201, 209, 217, 0.1)' },
+                        ticks: { 
+                            color: 'var(--text-secondary)',
+                            maxRotation: 45,
+                            minRotation: 45
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        labels: { color: 'var(--text-primary)' }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            afterLabel: function(context) {
+                                const index = context.dataIndex;
+                                const status = data.statuses[index];
+                                if (status === 'BELOW_REQUIREMENT') {
+                                    return '⚠️ Below Requirement';
+                                } else if (status === 'OK') {
+                                    return '✅ OK';
+                                }
+                                return '';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Socket.IO listener for occupancy updates
+    socket.on('occupancy_update', data => {
+        const liveEl = document.getElementById(`occupancy-live-${data.channel_id}`);
+        const requiredEl = document.getElementById(`occupancy-required-${data.channel_id}`);
+        const slotEl = document.getElementById(`current-slot-${data.channel_id}`);
+        const statusEl = document.getElementById(`status-${data.channel_id}`);
+        const alertBanner = document.getElementById(`occupancy-alert-${data.channel_id}`);
+        const alertMsg = document.getElementById(`alert-message-${data.channel_id}`);
+        
+        if (liveEl) liveEl.textContent = data.live_count;
+        if (requiredEl) requiredEl.textContent = data.required_count || 'N/A';
+        if (slotEl) slotEl.textContent = data.time_slot;
+        
+        if (statusEl) {
+            if (data.status === 'BELOW_REQUIREMENT') {
+                statusEl.textContent = '⚠️ Below Requirement';
+                statusEl.style.color = '#ef4444';
+            } else if (data.status === 'OK') {
+                statusEl.textContent = '✅ OK';
+                statusEl.style.color = '#10b981';
+            } else {
+                statusEl.textContent = '—';
+                statusEl.style.color = 'var(--text-secondary)';
+            }
+        }
+        
+        // Show/hide alert banner
+        if (alertBanner && alertMsg) {
+            if (data.status === 'BELOW_REQUIREMENT') {
+                alertBanner.style.display = 'block';
+                alertMsg.textContent = `⚠️ ALERT: People count below requirement! (Required: ${data.required_count}, Detected: ${data.live_count})`;
+            } else {
+                alertBanner.style.display = 'none';
+            }
         }
     });
 
