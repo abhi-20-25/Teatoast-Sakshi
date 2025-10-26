@@ -1,0 +1,134 @@
+╔════════════════════════════════════════════════════════════════╗
+║     ✅ DEPLOY FROM TEATOAST REPOSITORY TO SERVER ✅          ║
+╚════════════════════════════════════════════════════════════════╝
+
+✅ Code pushed to: https://github.com/abhi-20-25/Teatoast.git
+✅ Branch: main
+✅ All Occupancy Monitor files included
+✅ venv excluded
+✅ Ready for server deployment
+
+════════════════════════════════════════════════════════════════
+🖥️  RUN ON YOUR SERVER (Complete Command):
+════════════════════════════════════════════════════════════════
+
+cd /home/ubuntu && rm -rf Sakshi-Teatoast-New && git clone https://github.com/abhi-20-25/Teatoast.git Sakshi-Teatoast-New && cd Sakshi-Teatoast-New && docker-compose down --remove-orphans 2>/dev/null ; docker-compose build && docker-compose up -d --remove-orphans && sleep 30 && docker-compose ps && echo "" && echo "Device Check:" && docker-compose logs occupancy-monitor-processor | grep "Using device"
+
+════════════════════════════════════════════════════════════════
+🎯 OR STEP-BY-STEP:
+════════════════════════════════════════════════════════════════
+
+# Step 1: Clone fresh from Teatoast repo
+cd /home/ubuntu
+git clone https://github.com/abhi-20-25/Teatoast.git Sakshi-Teatoast-New
+
+# Step 2: Go to directory
+cd Sakshi-Teatoast-New
+
+# Step 3: Build and deploy
+docker-compose build
+docker-compose up -d --remove-orphans
+
+# Step 4: Wait for initialization
+sleep 30
+
+# Step 5: Verify
+docker-compose ps
+docker-compose logs occupancy-monitor-processor | grep "Using device"
+curl http://localhost:5017/health
+
+════════════════════════════════════════════════════════════════
+🔄 OR UPDATE EXISTING DIRECTORY:
+════════════════════════════════════════════════════════════════
+
+# If you want to update existing Sakshi-Teatoast directory:
+
+cd /home/ubuntu/Sakshi-Teatoast
+
+# Backup current state (optional)
+git stash
+
+# Change remote to Teatoast repo
+git remote set-url origin https://github.com/abhi-20-25/Teatoast.git
+
+# Pull from new repo
+git fetch origin
+git reset --hard origin/main
+
+# Deploy
+docker-compose down --remove-orphans
+docker-compose build
+docker-compose up -d --remove-orphans
+
+sleep 30
+docker-compose ps
+
+════════════════════════════════════════════════════════════════
+✅ WHAT'S INCLUDED IN TEATOAST REPO:
+════════════════════════════════════════════════════════════════
+
+✓ All Occupancy Monitor files
+✓ All processor files
+✓ All service files
+✓ All Docker files
+✓ Updated docker-compose.yml (CPU compatible)
+✓ Updated main_app.py
+✓ Updated dashboard.html
+✓ All documentation
+✓ Test schedules
+✓ Everything EXCEPT venv folder
+
+════════════════════════════════════════════════════════════════
+📊 AFTER DEPLOYMENT ON SERVER:
+════════════════════════════════════════════════════════════════
+
+Expected containers:
+  ✓ sakshi-postgres (healthy)
+  ✓ sakshi-main-app (healthy)
+  ✓ sakshi-occupancy-monitor (running on CPU)
+  ✓ sakshi-people-counter
+  ✓ sakshi-queue-monitor
+  ✓ sakshi-kitchen-compliance
+
+Expected log output:
+  🎯 Using device: CPU
+  ✅ Occupancy Monitor initialized for People
+  Device: CPU, Confidence: 0.15, Mode: CONTINUOUS
+
+════════════════════════════════════════════════════════════════
+🌐 ACCESS DASHBOARD:
+════════════════════════════════════════════════════════════════
+
+http://YOUR_SERVER_IP:5001/dashboard
+
+✅ Find "Occupancy Monitor" section
+✅ Upload schedule
+✅ Watch smooth detection on CPU!
+
+════════════════════════════════════════════════════════════════
+🎯 RECOMMENDED APPROACH FOR YOUR SERVER:
+════════════════════════════════════════════════════════════════
+
+Since your server had conflicts, FRESH CLONE is best:
+
+cd /home/ubuntu
+git clone https://github.com/abhi-20-25/Teatoast.git Sakshi-Teatoast-Fresh
+cd Sakshi-Teatoast-Fresh
+docker-compose build
+docker-compose up -d --remove-orphans
+
+This gives you a completely clean installation with all
+Occupancy Monitor features ready to go!
+
+════════════════════════════════════════════════════════════════
+✨ READY FOR DEPLOYMENT!
+════════════════════════════════════════════════════════════════
+
+Repository: https://github.com/abhi-20-25/Teatoast.git
+Branch: main
+Status: All code pushed and ready
+
+Copy commands above and run on your server!
+
+════════════════════════════════════════════════════════════════
+
