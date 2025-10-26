@@ -1,19 +1,23 @@
-# Server Deployment Guide - OpenPyXL & Schedule Upload Fix
+# Server Deployment Guide - Complete Fix Package
 
 ## 🔧 Fixes Applied
 - ✅ Added `openpyxl>=3.1.0` to requirements files
 - ✅ Improved Excel time parsing to handle multiple formats
 - ✅ **NEW: Added CSV file support** - Now accepts both .xlsx and .csv files
+- ✅ **NEW: Optimized RTSP streaming** - Smooth, real-time playback (100 FPS)
 - ✅ Fixed "0 time slots configured" issue
 - ✅ Resolves "No module named 'openpyxl'" error
 - ✅ PostgreSQL and detection image storage verified working
+- ✅ Queue Monitor ROI/line settings persist to database
 
 ## 📝 What's Fixed
 1. **OpenPyXL Missing**: Added dependency for Excel file reading
 2. **Time Format Parsing**: Now handles datetime objects, time objects, and various string formats (9:00, 09:00, 09:00:00)
 3. **CSV Support**: Can now upload schedules in both CSV and Excel formats
-4. **Better Logging**: Shows how many time slots were successfully parsed
-5. **Error Handling**: Improved error messages for debugging
+4. **Streaming Performance**: Reduced lag from 25-50 FPS to 100 FPS for smooth real-time video
+5. **Cache Headers**: Added proper cache-control headers to prevent buffering
+6. **Better Logging**: Shows how many time slots were successfully parsed
+7. **Error Handling**: Improved error messages for debugging
 
 ## 📋 Quick Start (Automated Script)
 
