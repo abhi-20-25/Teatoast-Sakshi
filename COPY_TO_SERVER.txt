@@ -1,0 +1,22 @@
+════════════════════════════════════════════════════════════════
+  ✅ OCCUPANCY MONITOR - SERVER DEPLOYMENT
+════════════════════════════════════════════════════════════════
+
+Branch: feature/occupancy-monitor-production
+Status: ✅ Pushed to GitHub
+Server: Works on CPU (no GPU required)
+
+════════════════════════════════════════════════════════════════
+📋 COPY THIS ENTIRE COMMAND AND RUN ON SERVER:
+════════════════════════════════════════════════════════════════
+
+cd /home/ubuntu/Sakshi-Teatoast && git fetch origin && git checkout feature/occupancy-monitor-production && git pull origin feature/occupancy-monitor-production && docker-compose down --remove-orphans && docker-compose build occupancy-monitor-processor && docker-compose up -d --remove-orphans && sleep 30 && docker-compose ps && echo "" && echo "Device Check:" && docker-compose logs occupancy-monitor-processor | grep "Using device"
+
+════════════════════════════════════════════════════════════════
+
+After running, open: http://YOUR_SERVER_IP:5001/dashboard
+
+Look for "Occupancy Monitor" section!
+
+════════════════════════════════════════════════════════════════
+
