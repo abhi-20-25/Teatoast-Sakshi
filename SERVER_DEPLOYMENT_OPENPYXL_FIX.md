@@ -1,8 +1,9 @@
-# Server Deployment Guide - OpenPyXL & Excel Parsing Fix
+# Server Deployment Guide - OpenPyXL & Schedule Upload Fix
 
 ## 🔧 Fixes Applied
 - ✅ Added `openpyxl>=3.1.0` to requirements files
 - ✅ Improved Excel time parsing to handle multiple formats
+- ✅ **NEW: Added CSV file support** - Now accepts both .xlsx and .csv files
 - ✅ Fixed "0 time slots configured" issue
 - ✅ Resolves "No module named 'openpyxl'" error
 - ✅ PostgreSQL and detection image storage verified working
@@ -10,8 +11,9 @@
 ## 📝 What's Fixed
 1. **OpenPyXL Missing**: Added dependency for Excel file reading
 2. **Time Format Parsing**: Now handles datetime objects, time objects, and various string formats (9:00, 09:00, 09:00:00)
-3. **Better Logging**: Shows how many time slots were successfully parsed
-4. **Error Handling**: Improved error messages for debugging
+3. **CSV Support**: Can now upload schedules in both CSV and Excel formats
+4. **Better Logging**: Shows how many time slots were successfully parsed
+5. **Error Handling**: Improved error messages for debugging
 
 ## 📋 Quick Start (Automated Script)
 
@@ -98,13 +100,14 @@ docker-compose logs -f occupancy-monitor-processor
 docker-compose logs --tail=50
 ```
 
-### Step 7: Test Excel Upload
+### Step 7: Test Schedule Upload (CSV or Excel)
 
 1. Open browser: `http://your-server-ip:5001/dashboard`
 2. Navigate to Occupancy Monitor section
-3. Click "Upload Schedule (.xlsx)" 
-4. Upload a test Excel file
-5. Verify no "openpyxl" error appears
+3. Click "Upload Schedule (.xlsx or .csv)" 
+4. Upload either a CSV or Excel file with your schedule
+5. Verify you see: "X time slots configured" (not 0)
+6. Both file formats (.csv and .xlsx) should work perfectly
 
 ---
 
