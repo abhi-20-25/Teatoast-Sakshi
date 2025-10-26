@@ -1,0 +1,21 @@
+════════════════════════════════════════════════════════════════
+  🚀 QUICK SERVER DEPLOYMENT - COPY & PASTE
+════════════════════════════════════════════════════════════════
+
+SSH to your server, then run these commands:
+
+cd /home/ubuntu/Sakshi-Teatoast
+git pull origin modal-roi-queue-config-v3
+docker-compose down --remove-orphans
+docker-compose build occupancy-monitor-processor
+docker-compose up -d --remove-orphans
+sleep 30
+docker-compose ps
+docker-compose logs occupancy-monitor-processor | grep "Using device"
+
+════════════════════════════════════════════════════════════════
+
+✅ That's it! Then open http://YOUR_SERVER_IP:5001/dashboard
+
+════════════════════════════════════════════════════════════════
+

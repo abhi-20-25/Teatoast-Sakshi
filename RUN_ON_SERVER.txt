@@ -1,0 +1,124 @@
+╔════════════════════════════════════════════════════════════════╗
+║     📋 RUN THESE COMMANDS ON YOUR SERVER                     ║
+╚════════════════════════════════════════════════════════════════╝
+
+✅ All changes have been pushed to GitHub!
+✅ Branch: modal-roi-queue-config-v3
+✅ Repository: abhi-20-25/Sakshi-Teatoast
+
+════════════════════════════════════════════════════════════════
+🚀 COPY AND RUN ON SERVER:
+════════════════════════════════════════════════════════════════
+
+# Navigate to project directory
+cd /home/ubuntu/Sakshi-Teatoast
+
+# Pull latest changes from GitHub
+git fetch origin
+git pull origin modal-roi-queue-config-v3
+
+# Stop existing containers
+docker-compose down --remove-orphans
+
+# Build occupancy monitor container
+docker-compose build occupancy-monitor-processor
+
+# Start all services
+docker-compose up -d --remove-orphans
+
+# Wait for initialization
+sleep 30
+
+# Check status
+docker-compose ps
+
+# Verify occupancy monitor is running on CPU
+docker-compose logs occupancy-monitor-processor | grep -i "device"
+
+# Check health
+curl -s http://localhost:5017/health | python3 -m json.tool
+
+════════════════════════════════════════════════════════════════
+🎯 ALTERNATIVE: RUN THE AUTOMATED SCRIPT
+════════════════════════════════════════════════════════════════
+
+The deployment script was included in the git push!
+
+# Navigate to project
+cd /home/ubuntu/Sakshi-Teatoast
+
+# Pull the script
+git pull origin modal-roi-queue-config-v3
+
+# Run automated deployment
+./SERVER_DEPLOYMENT_COMMANDS.sh
+
+════════════════════════════════════════════════════════════════
+✅ EXPECTED OUTPUT ON SERVER:
+════════════════════════════════════════════════════════════════
+
+You should see:
+  🎯 Using device: CPU
+  ✅ Occupancy Monitor initialized for People
+  Device: CPU, Confidence: 0.15, Mode: CONTINUOUS (Smooth streaming)
+  Video FPS: 14.9, Frame delay: 0.067s
+
+All containers running:
+  ✓ sakshi-postgres (healthy)
+  ✓ sakshi-main-app (healthy)
+  ✓ sakshi-occupancy-monitor (running on CPU)
+  ✓ sakshi-people-counter
+  ✓ sakshi-queue-monitor
+  ✓ sakshi-kitchen-compliance
+
+════════════════════════════════════════════════════════════════
+🌐 ACCESS ON SERVER:
+════════════════════════════════════════════════════════════════
+
+Dashboard: http://YOUR_SERVER_IP:5001/dashboard
+API: http://YOUR_SERVER_IP:5017/health
+
+(Replace YOUR_SERVER_IP with actual server IP)
+
+════════════════════════════════════════════════════════════════
+📋 AFTER DEPLOYMENT:
+════════════════════════════════════════════════════════════════
+
+1. Open dashboard in browser
+2. Find "Occupancy Monitor" section
+3. Upload schedule (.xlsx file with Time, Monday, Tuesday, etc.)
+4. Watch smooth detection on CPU!
+
+Note: CPU is slower than GPU but still works perfectly:
+  • Detection: Every 1 second (same as GPU)
+  • Accuracy: Same YOLOv11m model
+  • Streaming: Smooth, no frame skipping
+  • Just takes ~2-3 seconds per detection vs <1s on GPU
+
+════════════════════════════════════════════════════════════════
+🔍 TROUBLESHOOTING:
+════════════════════════════════════════════════════════════════
+
+If container fails to start:
+  docker-compose logs occupancy-monitor-processor
+
+If no detection happening:
+  • Upload a schedule first (required for scheduled operation)
+  • Check current time matches a schedule slot
+  • View logs: docker-compose logs -f occupancy-monitor-processor
+
+If orphan container errors:
+  docker-compose down --remove-orphans
+  docker-compose up -d --remove-orphans
+
+════════════════════════════════════════════════════════════════
+✨ DEPLOYMENT READY!
+════════════════════════════════════════════════════════════════
+
+All code is in GitHub. Just pull and deploy on server!
+
+Repository: https://github.com/abhi-20-25/Sakshi-Teatoast
+Branch: modal-roi-queue-config-v3
+
+════════════════════════════════════════════════════════════════
+
