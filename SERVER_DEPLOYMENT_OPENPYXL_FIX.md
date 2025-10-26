@@ -1,11 +1,37 @@
-# Server Deployment Guide - OpenPyXL Fix
+# Server Deployment Guide - OpenPyXL & Excel Parsing Fix
 
-## 🔧 Fix Applied
-- Added `openpyxl>=3.1.0` to requirements files
-- Resolves "No module named 'openpyxl'" error when uploading Excel schedules
-- PostgreSQL and detection image storage verified working
+## 🔧 Fixes Applied
+- ✅ Added `openpyxl>=3.1.0` to requirements files
+- ✅ Improved Excel time parsing to handle multiple formats
+- ✅ Fixed "0 time slots configured" issue
+- ✅ Resolves "No module named 'openpyxl'" error
+- ✅ PostgreSQL and detection image storage verified working
 
-## 📋 Deployment Commands for Server
+## 📝 What's Fixed
+1. **OpenPyXL Missing**: Added dependency for Excel file reading
+2. **Time Format Parsing**: Now handles datetime objects, time objects, and various string formats (9:00, 09:00, 09:00:00)
+3. **Better Logging**: Shows how many time slots were successfully parsed
+4. **Error Handling**: Improved error messages for debugging
+
+## 📋 Quick Start (Automated Script)
+
+The easiest way to update your server:
+
+```bash
+# Download and run the update script
+cd /home/ubuntu/Sakshi-Teatoast-Fresh
+git fetch origin
+git checkout fix/openpyxl-postgresql-detection-images
+git pull origin fix/openpyxl-postgresql-detection-images
+chmod +x SERVER_UPDATE_COMMANDS.sh
+./SERVER_UPDATE_COMMANDS.sh
+```
+
+Or follow the manual steps below:
+
+---
+
+## 📋 Manual Deployment Commands
 
 ### Step 1: Pull the Latest Changes
 
