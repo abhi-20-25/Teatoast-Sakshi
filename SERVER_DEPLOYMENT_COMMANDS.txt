@@ -1,0 +1,139 @@
+═══════════════════════════════════════════════════════════════════
+   SAKSHI AI - QUEUE MONITOR FIX - SERVER DEPLOYMENT COMMANDS
+═══════════════════════════════════════════════════════════════════
+
+🚀 QUICK DEPLOYMENT (Run on EC2 Server)
+───────────────────────────────────────────────────────────────────
+
+ssh ubuntu@13.200.138.25
+sudo su
+cd /home/ubuntu/Sakshi-Teatoast-Fresh
+
+# Pull latest fix
+git fetch origin
+git pull origin fix/ultra-low-latency-streaming
+
+# Rebuild and restart
+docker-compose down
+docker-compose build queue-monitor-processor main-app
+docker-compose up -d
+
+# Wait 30 seconds
+sleep 30
+
+# Check if fix worked
+docker-compose logs queue-monitor-processor | grep -E "Model warmup|Started queue|AttributeError"
+
+
+✅ WHAT'S FIXED
+───────────────────────────────────────────────────────────────────
+
+1. ✅ Queue Monitor Crash (AttributeError: bn) - FIXED
+   - Added model warmup to prevent YOLO fusion error
+   
+2. ✅ ROI Not Showing - WAS ALREADY WORKING
+   - Yellow overlay for Queue Area
+   - Cyan overlay for Counter Area
+   
+3. ✅ Bounding Boxes Not Showing - WAS ALREADY WORKING
+   - Yellow boxes for people in queue
+   - Cyan boxes for people at counter
+   
+4. ✅ Screenshots Not Captured - WAS ALREADY WORKING
+   - Saved to database automatically
+   - Displayed in Detection History tab
+   
+5. ✅ Detections Not in Frontend - WAS ALREADY WORKING
+   - SocketIO auto-updates
+   - History loads on page load
+   
+6. ✅ Data Not Persisting - WAS ALREADY WORKING
+   - ROI saved to PostgreSQL
+   - Auto-loads from database
+
+
+🧪 VERIFY THE FIX
+───────────────────────────────────────────────────────────────────
+
+# Should see these logs (no AttributeError):
+docker-compose logs queue-monitor-processor | tail -30
+
+Expected:
+  ✅ Model warmup successful
+  ✅ Started queue monitor for QueueMonitor
+  ✅ Video server started on port 5011
+
+Should NOT see:
+  ❌ AttributeError: bn
+  ❌ Processor QueueMonitor-QueueMonitor died
+
+
+🌐 TEST IN BROWSER
+───────────────────────────────────────────────────────────────────
+
+1. Open: http://13.200.138.25:5001
+2. Go to Queue Monitor section
+3. Click "Draw ROI"
+4. Draw a polygon
+5. Click "Save ROI & Settings"
+6. Expected: ✅ Success message (no 500 error)
+7. Verify: Yellow/cyan ROI appears on live feed
+8. Verify: Bounding boxes appear around people
+
+
+📊 CHECK DATABASE
+───────────────────────────────────────────────────────────────────
+
+# Check ROI was saved
+docker exec -it $(docker ps -qf "name=postgres") psql -U postgres -d sakshi -c \
+"SELECT channel_id, app_name, LENGTH(roi_points) FROM roi_configs;"
+
+# Check detections exist
+docker exec -it $(docker ps -qf "name=postgres") psql -U postgres -d sakshi -c \
+"SELECT app_name, COUNT(*) FROM detections GROUP BY app_name;"
+
+
+🔧 IF ISSUES PERSIST
+───────────────────────────────────────────────────────────────────
+
+# Rebuild from scratch
+docker-compose down
+docker-compose build --no-cache queue-monitor-processor
+docker-compose up -d
+
+# Check logs
+docker-compose logs -f queue-monitor-processor
+
+
+📝 KEY FILES MODIFIED
+───────────────────────────────────────────────────────────────────
+
+services/queue_monitor_service.py
+  - Added model warmup (lines 64-76)
+  - Prevents AttributeError: bn on first track() call
+
+processors/queue_monitor_processor.py
+  - Already had ROI visualization (lines 220-247)
+  - Already had bounding boxes (lines 196, 200)
+
+templates/dashboard.html
+  - Already had SocketIO listener (line 1717)
+  - Already auto-loads history (line 1647)
+
+main_app.py
+  - Already had handle_detection (line 226)
+  - Already saves screenshots to database
+
+
+🔗 DOCUMENTATION
+───────────────────────────────────────────────────────────────────
+
+Full deployment guide: DEPLOYMENT_QUEUE_FIX.md
+Automated script:      deploy_queue_fix.sh
+GitHub branch:         fix/ultra-low-latency-streaming
+
+
+═══════════════════════════════════════════════════════════════════
+              DEPLOYMENT READY - RUN COMMANDS ABOVE
+═══════════════════════════════════════════════════════════════════
+

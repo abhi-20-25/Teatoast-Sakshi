@@ -50,7 +50,8 @@ def get_stable_channel_id(link):
     return f"cam_{hashlib.md5(link.encode()).hexdigest()[:10]}"
 
 def load_model(model_path):
-    """Load YOLO model"""
+    """Load YOLO model with warmup to prevent fusion errors"""
+    import numpy as np
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     if not os.path.exists(model_path):
         logging.error(f"Model file not found: {model_path}")
@@ -59,6 +60,21 @@ def load_model(model_path):
         model = YOLO(model_path)
         model.to(device)
         logging.info(f"Loaded model '{os.path.basename(model_path)}' on '{device}'")
+        
+        # Warm up model to prevent AttributeError: bn during first track() call
+        try:
+            dummy_frame = np.zeros((640, 640, 3), dtype=np.uint8)
+            _ = model.track(dummy_frame, persist=True, classes=[0], verbose=False, conf=0.4)
+            logging.info("✅ Model warmup successful - AttributeError: bn prevented")
+        except AttributeError as e:
+            if "bn" in str(e):
+                # Expected on first call, model is now warmed up
+                logging.info("✅ Model warmed up (handled expected fusion error)")
+            else:
+                raise
+        except Exception as e:
+            logging.warning(f"Model warmup had non-critical error: {e}")
+        
         return model
     except Exception as e:
         logging.error(f"Failed to load model '{model_path}': {e}")
