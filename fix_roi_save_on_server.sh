@@ -45,24 +45,42 @@ docker-compose ps
 echo ""
 
 echo -e "${BLUE}Checking PostgreSQL connection...${NC}"
-if docker exec $(docker ps -qf "name=postgres") psql -U postgres -d sakshi -c "SELECT 1;" > /dev/null 2>&1; then
+POSTGRES_CONTAINER=$(docker ps -qf "name=postgres" 2>/dev/null)
+
+if [ -z "$POSTGRES_CONTAINER" ]; then
+    echo -e "${YELLOW}⚠️  No containers running. Starting containers...${NC}"
+    docker-compose up -d
+    echo -e "${BLUE}Waiting 30 seconds for PostgreSQL to start...${NC}"
+    sleep 30
+    POSTGRES_CONTAINER=$(docker ps -qf "name=postgres" 2>/dev/null)
+fi
+
+if [ -n "$POSTGRES_CONTAINER" ] && docker exec "$POSTGRES_CONTAINER" psql -U postgres -d sakshi -c "SELECT 1;" > /dev/null 2>&1; then
     echo -e "${GREEN}✅ PostgreSQL is accessible${NC}"
 else
-    echo -e "${RED}❌ PostgreSQL connection failed${NC}"
-    exit 1
+    echo -e "${RED}❌ PostgreSQL connection still failed. Will rebuild containers...${NC}"
 fi
 echo ""
 
 echo -e "${BLUE}Checking roi_configs table...${NC}"
-TABLE_EXISTS=$(docker exec $(docker ps -qf "name=postgres") psql -U postgres -d sakshi -t -c "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'roi_configs');" | tr -d '[:space:]')
+POSTGRES_CONTAINER=$(docker ps -qf "name=postgres" 2>/dev/null)
+
+if [ -z "$POSTGRES_CONTAINER" ]; then
+    echo -e "${YELLOW}⚠️  PostgreSQL not accessible, will check after rebuild${NC}"
+    TABLE_EXISTS="f"
+else
+    TABLE_EXISTS=$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d sakshi -t -c "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'roi_configs');" 2>/dev/null | tr -d '[:space:]')
+fi
 
 if [ "$TABLE_EXISTS" = "t" ]; then
     echo -e "${GREEN}✅ Table roi_configs exists${NC}"
-    ROW_COUNT=$(docker exec $(docker ps -qf "name=postgres") psql -U postgres -d sakshi -t -c "SELECT COUNT(*) FROM roi_configs;" | tr -d '[:space:]')
-    echo -e "   Current rows: $ROW_COUNT"
-else
+    if [ -n "$POSTGRES_CONTAINER" ]; then
+        ROW_COUNT=$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d sakshi -t -c "SELECT COUNT(*) FROM roi_configs;" 2>/dev/null | tr -d '[:space:]')
+        echo -e "   Current rows: $ROW_COUNT"
+    fi
+elif [ -n "$POSTGRES_CONTAINER" ]; then
     echo -e "${YELLOW}⚠️  Table roi_configs does not exist. Creating...${NC}"
-    docker exec $(docker ps -qf "name=postgres") psql -U postgres -d sakshi -c "
+    docker exec "$POSTGRES_CONTAINER" psql -U postgres -d sakshi -c "
     CREATE TABLE roi_configs (
         id SERIAL PRIMARY KEY,
         channel_id VARCHAR NOT NULL,
@@ -72,8 +90,10 @@ else
     );
     CREATE INDEX ix_roi_configs_channel_id ON roi_configs(channel_id);
     CREATE INDEX ix_roi_configs_app_name ON roi_configs(app_name);
-    "
+    " 2>/dev/null
     echo -e "${GREEN}✅ Table created${NC}"
+else
+    echo -e "${YELLOW}⚠️  Will create table after containers start${NC}"
 fi
 echo ""
 
