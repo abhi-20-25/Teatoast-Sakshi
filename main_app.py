@@ -333,17 +333,16 @@ def video_feed(app_name, channel_id):
             
             def gen_feed():
                 try:
-                    target_fps = 15  # Lower FPS for minimal latency
+                    target_fps = 10  # Ultra-low FPS for zero-lag streaming
                     frame_interval = 1.0 / target_fps
                     last_yield_time = 0
                     
                     while not shutdown_event.is_set():
                         current_time = time.time()
                         
-                        # Skip frames if we're behind schedule (prevent buffering)
+                        # Aggressive frame skipping to prevent buffering
                         if current_time - last_yield_time < frame_interval:
-                            time.sleep(0.001)  # Tiny sleep to prevent CPU spinning
-                            continue
+                            continue  # No sleep - skip immediately
                         
                         # Always get the latest frame (not buffered)
                         frame_bytes = target_processor.get_frame()
@@ -355,6 +354,7 @@ def video_feed(app_name, channel_id):
                                    b'Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\n'
                                    b'Pragma: no-cache\r\n'
                                    b'X-Accel-Buffering: no\r\n'
+                                   b'Connection: close\r\n'
                                    b'\r\n' + frame_bytes + b'\r\n')
                 except Exception as e:
                     logging.error(f"Error in video feed generator for {app_name}/{channel_id}: {e}")

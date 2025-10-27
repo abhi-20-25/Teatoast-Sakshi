@@ -35,16 +35,16 @@ class DetectionProcessor(threading.Thread):
         self.is_running = False
 
     def get_frame(self):
-        """Get the latest frame for video streaming"""
+        """Get the latest frame for video streaming - zero-lag optimized"""
         with self.lock:
             if self.latest_frame is not None:
-                success, jpeg = cv2.imencode('.jpg', self.latest_frame)
+                success, jpeg = cv2.imencode('.jpg', self.latest_frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
                 return jpeg.tobytes() if success else b''
             else:
                 # Return placeholder while connecting
                 placeholder = np.full((480, 640, 3), (22, 27, 34), dtype=np.uint8)
                 cv2.putText(placeholder, 'Connecting...', (180, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (201, 209, 217), 2)
-                _, jpeg = cv2.imencode('.jpg', placeholder)
+                _, jpeg = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 50])
                 return jpeg.tobytes()
 
     def run(self):

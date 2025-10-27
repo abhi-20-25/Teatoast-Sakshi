@@ -76,10 +76,10 @@ class PeopleCounterProcessor(threading.Thread):
             if self.latest_frame is None:
                 placeholder = np.full((480, 640, 3), (22, 27, 34), dtype=np.uint8)
                 cv2.putText(placeholder, 'Connecting...', (180, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (201, 209, 217), 2)
-                _, jpeg = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                _, jpeg = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 50])
                 return jpeg.tobytes()
-            # Use lower JPEG quality for reduced lag (85 instead of default 95)
-            success, jpeg = cv2.imencode('.jpg', self.latest_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            # Zero-lag: Aggressive JPEG compression for instant encoding
+            success, jpeg = cv2.imencode('.jpg', self.latest_frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
             return jpeg.tobytes() if success else b''
 
     def _load_initial_counts(self):

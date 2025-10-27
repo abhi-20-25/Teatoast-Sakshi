@@ -77,10 +77,10 @@ class HeatmapProcessor(threading.Thread):
         if snapshot is None:
             placeholder = np.full((480, 640, 3), (22, 27, 34), dtype=np.uint8)
             cv2.putText(placeholder, 'Connecting...', (180, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (201, 209, 217), 2)
-            _, jpeg = cv2.imencode('.jpg', placeholder)
+            _, jpeg = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 50])
             return jpeg.tobytes()
         
-        success, jpeg = cv2.imencode('.jpg', snapshot)
+        success, jpeg = cv2.imencode('.jpg', snapshot, [cv2.IMWRITE_JPEG_QUALITY, 50])
         return jpeg.tobytes() if success else b''
 
     def run(self):
