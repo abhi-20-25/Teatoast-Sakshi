@@ -48,20 +48,65 @@ def send_telegram_notification(message):
         logging.error(f"Error sending Telegram notification: {e}")
 
 def handle_detection(app_name, channel_id, frames, message, is_gif=False):
-    """Forward detection to main app"""
+    """Handle detection and save to database with image storage"""
+    from datetime import datetime
+    import pytz
+    import cv2
+    import imageio
+    
+    IST = pytz.timezone('Asia/Kolkata')
+    timestamp = datetime.now(IST)
+    ts_string = timestamp.strftime("%Y%m%d_%H%M%S")
+    filename = f"{app_name}_{channel_id}_{ts_string}.{'gif' if is_gif else 'jpg'}"
+    media_path = os.path.join('detections', filename)
+    full_path = os.path.join('/app/static', media_path)
+    
     try:
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        if is_gif and isinstance(frames, list) and len(frames) > 1:
+            rgb_frames = [cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for f in frames]
+            imageio.mimsave(full_path, rgb_frames, fps=10)
+        else:
+            frame_to_save = frames[0] if isinstance(frames, list) else frames
+            cv2.imwrite(full_path, frame_to_save)
+        logging.info(f"Saved kitchen detection: {filename}")
+    except Exception as e:
+        logging.error(f"Failed to save media file '{full_path}': {e}")
+        return None
+
+    # Save to database
+    try:
+        with SessionLocal() as db:
+            from main_app import Detection
+            db.add(Detection(
+                app_name=app_name,
+                channel_id=channel_id,
+                timestamp=timestamp,
+                message=message,
+                media_path=media_path
+            ))
+            db.commit()
+    except Exception as e:
+        logging.error(f"Failed to save detection to DB: {e}")
+
+    # Notify main app
+    try:
+        media_url = f"/static/{media_path}".replace('\\', '/')
         requests.post(
-            f"{MAIN_APP_URL}/api/handle_detection",
+            f"{MAIN_APP_URL}/api/detection_event",
             json={
                 'app_name': app_name,
                 'channel_id': channel_id,
+                'timestamp': timestamp.strftime("%Y-%m-%d %H:%M:%S"),
                 'message': message,
-                'is_gif': is_gif
+                'media_url': media_url
             },
             timeout=5
         )
     except Exception as e:
-        logging.warning(f"Failed to forward detection: {e}")
+        logging.warning(f"Failed to notify main app: {e}")
+
+    return media_path
 
 # Mock SocketIO
 class MockSocketIO:

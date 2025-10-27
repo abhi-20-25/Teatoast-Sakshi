@@ -63,8 +63,20 @@ class KitchenComplianceProcessor(threading.Thread):
         self.handle_main_detection = detection_callback
 
         try:
-            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            logging.info(f"Using device: {self.device} for Kitchen channel {self.channel_name}")
+            # Enhanced CUDA detection and optimization
+            if torch.cuda.is_available():
+                self.device = 'cuda'
+                # Set CUDA memory management
+                torch.cuda.empty_cache()
+                # Enable cuDNN optimizations
+                torch.backends.cudnn.benchmark = True
+                torch.backends.cudnn.deterministic = False
+                logging.info(f"CUDA available - Using GPU for Kitchen channel {self.channel_name}")
+            else:
+                self.device = 'cpu'
+                logging.info(f"CUDA not available - Using CPU for Kitchen channel {self.channel_name}")
+            
+            # Load models with optimization
             for model_path in [APRON_CAP_MODEL_PATH, GLOVES_MODEL_PATH, GENERAL_MODEL_PATH]:
                 if not os.path.exists(model_path):
                     raise FileNotFoundError(f"Missing model file: {model_path}")
@@ -72,10 +84,19 @@ class KitchenComplianceProcessor(threading.Thread):
             self.apron_cap_model = YOLO(APRON_CAP_MODEL_PATH)
             self.gloves_model = YOLO(GLOVES_MODEL_PATH)
             self.general_model = YOLO(GENERAL_MODEL_PATH)
+            
+            # Move to device and optimize
             self.apron_cap_model.to(self.device)
             self.gloves_model.to(self.device)
             self.general_model.to(self.device)
-            logging.info(f"Successfully loaded Kitchen Compliance models for {self.channel_name}")
+            
+            # Enable half precision for CUDA
+            if self.device == 'cuda':
+                self.apron_cap_model.half()
+                self.gloves_model.half()
+                self.general_model.half()
+            
+            logging.info(f"Successfully loaded Kitchen Compliance models for {self.channel_name} on {self.device}")
         except Exception as e:
             self.error_message = f"Model Error: {e}"
             logging.error(f"FATAL: Failed to initialize Kitchen models for {self.channel_name}. Error: {e}")
@@ -130,6 +151,65 @@ class KitchenComplianceProcessor(threading.Thread):
             except Exception as e:
                 logging.error(f"Failed to save kitchen violation to DB: {e}")
                 db.rollback()
+
+    def _draw_bounding_boxes(self, frame, person_results, phone_results):
+        """Draw bounding boxes and labels on the frame"""
+        annotated_frame = frame.copy()
+        
+        # Draw person bounding boxes
+        if person_results and person_results[0].boxes.id is not None:
+            track_ids = person_results[0].boxes.id.int().cpu().tolist()
+            person_boxes = person_results[0].boxes.xyxy.cpu()
+            
+            for person_box, track_id in zip(person_boxes, track_ids):
+                x1, y1, x2, y2 = map(int, person_box)
+                # Draw person bounding box
+                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(annotated_frame, f'Person {track_id}', (x1, y1-10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        
+        # Draw phone bounding boxes
+        for r in phone_results:
+            for box in r.boxes:
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                conf = float(box.conf[0])
+                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                cv2.putText(annotated_frame, f'Phone {conf:.2f}', (x1, y1-10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+        
+        # Draw apron/cap detection boxes
+        for r in self.last_apron_cap_results:
+            for box in r.boxes:
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                violation_class = self.apron_cap_model.names[int(box.cls[0])]
+                conf = float(box.conf[0])
+                color = (0, 0, 255) if 'Without' in violation_class else (0, 255, 0)
+                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(annotated_frame, f'{violation_class} {conf:.2f}', (x1, y1-10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        
+        # Draw gloves detection boxes
+        for r in self.last_gloves_results:
+            for box in r.boxes:
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                glove_class = self.gloves_model.names[int(box.cls[0])]
+                conf = float(box.conf[0])
+                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
+                cv2.putText(annotated_frame, f'{glove_class} {conf:.2f}', (x1, y1-10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+        
+        return annotated_frame
+
+    def _process_frame_optimized(self, frame):
+        """Optimized frame processing with CUDA support"""
+        if self.device == 'cuda':
+            # Convert to half precision for CUDA
+            frame_tensor = torch.from_numpy(frame).cuda().half()
+            frame_tensor = frame_tensor.permute(2, 0, 1).unsqueeze(0) / 255.0
+        else:
+            frame_tensor = frame
+        
+        return frame_tensor
 
     def _trigger_alert(self, frame, violation_type, details):
         logging.warning(f"ALERT on {self.channel_name}: {details}")
@@ -196,18 +276,38 @@ class KitchenComplianceProcessor(threading.Thread):
 
             frame_count += 1
             current_time = time.time()
-            annotated_frame = frame.copy()
             
+            # Optimized frame processing
+            processed_frame = self._process_frame_optimized(frame)
+            
+            # Run inferences with optimized settings
+            with torch.no_grad() if self.device == 'cuda' else torch.enable_grad():
+                person_results = self.general_model.track(
+                    frame, persist=True, classes=[0], 
+                    conf=CONFIDENCE_THRESHOLD, verbose=False,
+                    device=self.device
+                )
+                phone_results = self.general_model(
+                    frame, classes=[67], conf=CONFIDENCE_THRESHOLD, 
+                    verbose=False, device=self.device
+                )
+
+                if frame_count % FRAME_SKIP_RATE == 0:
+                    self.last_apron_cap_results = self.apron_cap_model(
+                        frame, conf=CONFIDENCE_THRESHOLD, 
+                        verbose=False, device=self.device
+                    )
+                    self.last_gloves_results = self.gloves_model(
+                        frame, conf=CONFIDENCE_THRESHOLD, 
+                        verbose=False, device=self.device
+                    )
+
+            # Draw bounding boxes and create annotated frame
+            annotated_frame = self._draw_bounding_boxes(frame, person_results, phone_results)
+            
+            # Update the latest frame with annotations
             with self.lock:
                 self.latest_frame = annotated_frame.copy()
-
-            # --- Run Inferences ---
-            person_results = self.general_model.track(frame, persist=True, classes=[0], conf=CONFIDENCE_THRESHOLD, verbose=False)
-            phone_results = self.general_model(frame, classes=[67], conf=CONFIDENCE_THRESHOLD, verbose=False)
-
-            if frame_count % FRAME_SKIP_RATE == 0:
-                self.last_apron_cap_results = self.apron_cap_model(frame, conf=CONFIDENCE_THRESHOLD, verbose=False)
-                self.last_gloves_results = self.gloves_model(frame, conf=CONFIDENCE_THRESHOLD, verbose=False)
 
             # --- Process Each Person ---
             if person_results and person_results[0].boxes.id is not None:

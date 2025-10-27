@@ -43,11 +43,11 @@ APP_TASKS_CONFIG = {
     'Shoplifting': {'model_path': os.path.join(MODELS_FOLDER, 'best_shoplift.pt'), 'target_class_id': 1, 'confidence': 0.8, 'is_gif': True},
     'QPOS': {'model_path': os.path.join(MODELS_FOLDER, 'best_qpos.pt'), 'target_class_id': 0, 'confidence': 0.87, 'is_gif': False},
     'Generic': {'model_path': os.path.join(MODELS_FOLDER, 'best_generic.pt'), 'target_class_id': list(range(1, 8)), 'confidence': 0.6, 'is_gif': True},
-    'PeopleCounter': {'model_path': os.path.join(MODELS_FOLDER, 'yolov8n.pt')},
+    'PeopleCounter': {'model_path': os.path.join(MODELS_FOLDER, 'yolov8n.pt'), 'confidence': 0.25},
     'Heatmap': {'model_path': os.path.join(MODELS_FOLDER, 'yolov8n.pt')},
-    'QueueMonitor': {'model_path': os.path.join(MODELS_FOLDER, 'yolov8n.pt')},
+    'QueueMonitor': {'model_path': os.path.join(MODELS_FOLDER, 'yolov8n.pt'), 'confidence': 0.25},
     'ShutterMonitor': {'model_path': os.path.join(MODELS_FOLDER, 'shutter_model.pt')},
-    'Security': {}, 'KitchenCompliance': {},
+    'Security': {'model_path': os.path.join(MODELS_FOLDER, 'security.pt'), 'confidence': 0.5}, 'KitchenCompliance': {'model_path': os.path.join(MODELS_FOLDER, 'gloves.pt'), 'confidence': 0.5, 'apron_cap_model_path': os.path.join(MODELS_FOLDER, 'apron-cap.pt')},
     'OccupancyMonitor': {'model_path': os.path.join(MODELS_FOLDER, 'yolo11m.pt')}
 }
 
@@ -396,6 +396,70 @@ def get_history(app_name):
                 'message': d.message,
                 'media_url': f"/{d.media_path}".replace('\\', '/')
             } for d in detections],
+            'total': total, 'page': page, 'limit': limit
+        })
+
+@app.route('/history/KitchenCompliance')
+def get_kitchen_history():
+    """Get kitchen compliance history from both Detection and KitchenViolation tables"""
+    page = request.args.get('page', 1, type=int)
+    limit = request.args.get('limit', 10, type=int)
+    channel_id = request.args.get('channel_id')
+    start_date_str = request.args.get('start_date')
+    end_date_str = request.args.get('end_date')
+    
+    with SessionLocal() as db:
+        # Query both Detection and KitchenViolation tables
+        detection_query = db.query(Detection).filter(Detection.app_name == 'KitchenCompliance')
+        violation_query = db.query(KitchenViolation)
+        
+        if channel_id and channel_id != 'null':
+            detection_query = detection_query.filter(Detection.channel_id == channel_id)
+            violation_query = violation_query.filter(KitchenViolation.channel_id == channel_id)
+        
+        if start_date_str and end_date_str:
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+            detection_query = detection_query.filter(Detection.timestamp >= start_date, Detection.timestamp < (end_date + timedelta(days=1)))
+            violation_query = violation_query.filter(KitchenViolation.timestamp >= start_date, KitchenViolation.timestamp < (end_date + timedelta(days=1)))
+        
+        # Combine results
+        detections = detection_query.all()
+        violations = violation_query.all()
+        
+        # Merge and sort by timestamp
+        all_items = []
+        for d in detections:
+            all_items.append({
+                'timestamp': d.timestamp,
+                'message': d.message,
+                'media_url': f"/{d.media_path}".replace('\\', '/'),
+                'type': 'detection'
+            })
+        
+        for v in violations:
+            all_items.append({
+                'timestamp': v.timestamp,
+                'message': f"{v.violation_type}: {v.details}",
+                'media_url': f"/{v.media_path}".replace('\\', '/'),
+                'type': 'violation'
+            })
+        
+        # Sort by timestamp descending
+        all_items.sort(key=lambda x: x['timestamp'], reverse=True)
+        
+        # Pagination
+        total = len(all_items)
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        paginated_items = all_items[start_idx:end_idx]
+        
+        return jsonify({
+            'detections': [{
+                'timestamp': item['timestamp'].strftime("%Y-%m-%d %H:%M:%S"),
+                'message': item['message'],
+                'media_url': item['media_url']
+            } for item in paginated_items],
             'total': total, 'page': page, 'limit': limit
         })
 
