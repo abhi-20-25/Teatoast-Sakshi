@@ -132,17 +132,17 @@ class OccupancyMonitorProcessor(threading.Thread):
             return False
     
     def get_frame(self):
-        """Return latest frame as JPEG bytes"""
+        """Return latest frame as JPEG bytes - optimized for minimal latency"""
         with self.lock:
             if self.latest_frame is None:
                 placeholder = np.full((480, 640, 3), (22, 27, 34), dtype=np.uint8)
                 cv2.putText(placeholder, 'Connecting...', (180, 240), 
                            cv2.FONT_HERSHEY_SIMPLEX, 1, (201, 209, 217), 2)
-                _, jpeg = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                _, jpeg = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 60])
                 return jpeg.tobytes()
             
-            # Optimized JPEG quality for better streaming performance
-            success, jpeg = cv2.imencode('.jpg', self.latest_frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            # Ultra-low latency: Lower JPEG quality for faster encoding
+            success, jpeg = cv2.imencode('.jpg', self.latest_frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
             return jpeg.tobytes() if success else b''
     
     def _is_within_schedule(self):
@@ -320,8 +320,10 @@ class OccupancyMonitorProcessor(threading.Thread):
             logging.error(f"Failed to open RTSP stream: {self.rtsp_url}")
             return
         
-        # Optimize for smooth real-time streaming
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimal buffer for real-time
+        # Ultra-low latency settings
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimal buffer
+        cap.set(cv2.CAP_PROP_FPS, 15)  # Lower capture FPS
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))  # Use MJPEG for faster decode
         
         # Get stream FPS for smooth playback
         fps = cap.get(cv2.CAP_PROP_FPS)
@@ -341,13 +343,20 @@ class OccupancyMonitorProcessor(threading.Thread):
         
         while self.is_running:
             frame_start_time = time.time()
-            ret, frame = cap.read()
+            
+            # Skip buffered frames to get the latest one (reduces lag)
+            for _ in range(2):
+                cap.grab()
+            
+            ret, frame = cap.retrieve()
             
             if not ret:
                 logging.warning(f"Failed to read frame from {self.channel_name}, attempting reconnect...")
                 cap.release()
                 time.sleep(2)
                 cap = cv2.VideoCapture(self.rtsp_url)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                cap.set(cv2.CAP_PROP_FPS, 15)
                 reconnect_attempts += 1
                 
                 if reconnect_attempts >= max_reconnect_attempts:

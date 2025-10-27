@@ -101,10 +101,10 @@ class QueueMonitorProcessor(threading.Thread):
             if self.latest_frame is None:
                 placeholder = np.full((480, 640, 3), (22, 27, 34), dtype=np.uint8)
                 cv2.putText(placeholder, 'Connecting...', (180, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (201, 209, 217), 2)
-                _, jpeg = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                _, jpeg = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 60])
                 return jpeg.tobytes()
-            # Use lower JPEG quality for reduced lag (85 instead of default 95)
-            success, jpeg = cv2.imencode('.jpg', self.latest_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            # Ultra-low latency: Lower JPEG quality for faster encoding (60 instead of 85)
+            success, jpeg = cv2.imencode('.jpg', self.latest_frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
             return jpeg.tobytes() if success else b''
 
     def run(self):
@@ -117,6 +117,9 @@ class QueueMonitorProcessor(threading.Thread):
             cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
             cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
             cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+            # Ultra-low latency optimizations
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimal buffer
+            cap.set(cv2.CAP_PROP_FPS, 15)  # Lower FPS for reduced lag
             
             if not cap.isOpened():
                 logging.warning(f"Could not open QueueMonitor stream for {self.channel_name}, using placeholder")
@@ -142,7 +145,14 @@ class QueueMonitorProcessor(threading.Thread):
         is_file = any(self.rtsp_url.lower().endswith(ext) for ext in ['.mp4', '.avi', '.mov'])
 
         while self.is_running:
-            ret, frame = cap.read()
+            # Skip buffered frames to get the latest one (reduces lag)
+            if not is_file:
+                for _ in range(2):
+                    cap.grab()
+                ret, frame = cap.retrieve()
+            else:
+                ret, frame = cap.read()
+                
             if not ret:
                 if is_file:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -152,6 +162,8 @@ class QueueMonitorProcessor(threading.Thread):
                     time.sleep(5)
                     cap.release()
                     cap = cv2.VideoCapture(self.rtsp_url)
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    cap.set(cv2.CAP_PROP_FPS, 15)
                     continue
             
             if self.frame_dimensions is None:

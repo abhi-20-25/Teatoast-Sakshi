@@ -440,15 +440,29 @@
             secondary: state.points.secondary.map(p => [p.x / canvas.width, p.y / canvas.height])
         };
         
-        const response = await fetch('/api/set_roi', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ app_name: appName, channel_id: channelId, roi_points: normalizedPoints })
-        });
-        
-        const result = await response.json();
-        alert(result.success ? 'ROI saved successfully!' : `Error: ${result.error}`);
-        if(result.success) cancelRoiEdit(appName, channelId);
+        try {
+            const response = await fetch('/api/set_roi', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ app_name: appName, channel_id: channelId, roi_points: normalizedPoints })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+            }
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                alert('✅ ROI saved successfully!');
+                cancelRoiEdit(appName, channelId);
+            } else {
+                alert(`❌ Error: ${result.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error('Error saving ROI:', error);
+            alert(`❌ Failed to save ROI: ${error.message}\n\nPlease check:\n1. Server is running\n2. Network connection\n3. Browser console for details`);
+        }
     }
     
     function handleCanvasClick(event, appName, channelId) {
@@ -1064,20 +1078,34 @@
             alert_cooldown: parseInt(document.getElementById('queueAlertCooldown').value)
         };
         
-        const response = await fetch('/api/set_roi', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                app_name: modalRoiState.appName,
-                channel_id: modalRoiState.channelId,
-                roi_points: normalizedPoints,
-                queue_settings: queueSettings
-            })
-        });
-        
-        const result = await response.json();
-        alert(result.success ? 'ROI and settings saved successfully! Changes will take effect immediately.' : `Error: ${result.error}`);
-        if (result.success) closeRoiModal();
+        try {
+            const response = await fetch('/api/set_roi', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    app_name: modalRoiState.appName,
+                    channel_id: modalRoiState.channelId,
+                    roi_points: normalizedPoints,
+                    queue_settings: queueSettings
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+            }
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                alert('✅ ROI and settings saved successfully! Changes will take effect immediately.');
+                closeRoiModal();
+            } else {
+                alert(`❌ Error saving ROI: ${result.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error('Error saving ROI:', error);
+            alert(`❌ Failed to save ROI: ${error.message}\n\nPlease check:\n1. Server is running\n2. Network connection\n3. Browser console for details`);
+        }
     }
 
     // --- Modal Line Editor Functions ---
