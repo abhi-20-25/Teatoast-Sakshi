@@ -216,11 +216,40 @@ class QueueMonitorProcessor(threading.Thread):
             self.send_telegram(f"🚨 Queue Alert: {self.channel_name}\n{alert_message}")
             self.handle_detection('QueueMonitor', self.channel_id, [frame], alert_message, is_gif=False)
 
-        if self.roi_poly.is_valid and not self.roi_poly.is_empty: cv2.polylines(annotated_frame, [np.array(self.roi_poly.exterior.coords, dtype=np.int32)], True, (255, 255, 0), 2)
-        if self.secondary_roi_poly.is_valid and not self.secondary_roi_poly.is_empty: cv2.polylines(annotated_frame, [np.array(self.secondary_roi_poly.exterior.coords, dtype=np.int32)], True, (0, 255, 255), 2)
+        # Draw ROI polygons with enhanced visibility
+        if self.roi_poly.is_valid and not self.roi_poly.is_empty:
+            roi_points = np.array(self.roi_poly.exterior.coords, dtype=np.int32)
+            # Semi-transparent yellow overlay
+            overlay = annotated_frame.copy()
+            cv2.fillPoly(overlay, [roi_points], (0, 255, 255))  # Yellow fill
+            cv2.addWeighted(overlay, 0.15, annotated_frame, 0.85, 0, annotated_frame)
+            # Thick yellow border
+            cv2.polylines(annotated_frame, [roi_points], True, (0, 255, 255), 3)
+            # Add "QUEUE AREA" label
+            if len(roi_points) > 0:
+                label_x, label_y = int(roi_points[0][0]), int(roi_points[0][1]) - 10
+                cv2.putText(annotated_frame, "QUEUE AREA", (label_x, label_y), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        
+        if self.secondary_roi_poly.is_valid and not self.secondary_roi_poly.is_empty:
+            secondary_points = np.array(self.secondary_roi_poly.exterior.coords, dtype=np.int32)
+            # Semi-transparent cyan overlay
+            overlay = annotated_frame.copy()
+            cv2.fillPoly(overlay, [secondary_points], (255, 255, 0))  # Cyan fill
+            cv2.addWeighted(overlay, 0.15, annotated_frame, 0.85, 0, annotated_frame)
+            # Thick cyan border
+            cv2.polylines(annotated_frame, [secondary_points], True, (255, 255, 0), 3)
+            # Add "COUNTER AREA" label
+            if len(secondary_points) > 0:
+                label_x, label_y = int(secondary_points[0][0]), int(secondary_points[0][1]) - 10
+                cv2.putText(annotated_frame, "COUNTER AREA", (label_x, label_y), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
-        cv2.putText(annotated_frame, f"Queue: {self.current_queue_count}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
-        cv2.putText(annotated_frame, f"Counter Area: {people_in_secondary_roi}", (50, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+        # Add stats overlay with better styling
+        cv2.putText(annotated_frame, f"Queue: {self.current_queue_count}", (15, 40), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
+        cv2.putText(annotated_frame, f"Counter: {people_in_secondary_roi}", (15, 85), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 0), 3)
         with self.lock:
             self.latest_frame = annotated_frame.copy()
 

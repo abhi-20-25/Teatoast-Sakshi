@@ -441,26 +441,33 @@
         };
         
         try {
+            console.log('📤 Sending ROI data:', { app_name: appName, channel_id: channelId, roi_points: normalizedPoints });
+            
             const response = await fetch('/api/set_roi', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ app_name: appName, channel_id: channelId, roi_points: normalizedPoints })
             });
             
+            console.log('📥 Response status:', response.status, response.statusText);
+            
             if (!response.ok) {
                 throw new Error(`Server returned ${response.status}: ${response.statusText}`);
             }
             
             const result = await response.json();
+            console.log('📊 Response data:', result);
             
             if (result.success) {
+                console.log('✅ SUCCESS: ROI saved');
                 alert('✅ ROI saved successfully!');
                 cancelRoiEdit(appName, channelId);
             } else {
+                console.error('❌ ERROR:', result.error);
                 alert(`❌ Error: ${result.error || 'Unknown error'}`);
             }
         } catch (error) {
-            console.error('Error saving ROI:', error);
+            console.error('❌ EXCEPTION:', error);
             alert(`❌ Failed to save ROI: ${error.message}\n\nPlease check:\n1. Server is running\n2. Network connection\n3. Browser console for details`);
         }
     }
@@ -1079,6 +1086,13 @@
         };
         
         try {
+            console.log('📤 Sending ROI data to server:', {
+                app_name: modalRoiState.appName,
+                channel_id: modalRoiState.channelId,
+                roi_points: normalizedPoints,
+                queue_settings: queueSettings
+            });
+            
             const response = await fetch('/api/set_roi', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1090,20 +1104,25 @@
                 })
             });
             
+            console.log('📥 Server response status:', response.status, response.statusText);
+            
             if (!response.ok) {
                 throw new Error(`Server returned ${response.status}: ${response.statusText}`);
             }
             
             const result = await response.json();
+            console.log('📊 Server response data:', result);
             
             if (result.success) {
+                console.log('✅ SUCCESS: ROI and settings saved to database');
                 alert('✅ ROI and settings saved successfully! Changes will take effect immediately.');
                 closeRoiModal();
             } else {
+                console.error('❌ ERROR: Server returned error:', result.error);
                 alert(`❌ Error saving ROI: ${result.error || 'Unknown error'}`);
             }
         } catch (error) {
-            console.error('Error saving ROI:', error);
+            console.error('❌ EXCEPTION: Failed to save ROI:', error);
             alert(`❌ Failed to save ROI: ${error.message}\n\nPlease check:\n1. Server is running\n2. Network connection\n3. Browser console for details`);
         }
     }
