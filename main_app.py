@@ -25,6 +25,7 @@ from processors.people_counter_processor import PeopleCounterProcessor, DailyFoo
 from processors.queue_monitor_processor import QueueMonitorProcessor, QueueLog
 from processors.detection_processor import DetectionProcessor
 from processors.heatmap_processor import HeatmapProcessor
+from processors.occupancy_monitor_processor import OccupancyMonitorProcessor, OccupancyLog, OccupancySchedule
 
 # --- Master Configuration ---
 IST = pytz.timezone('Asia/Kolkata')
@@ -127,6 +128,7 @@ def initialize_database():
         KitchenComplianceProcessor.initialize_tables(engine)
         PeopleCounterProcessor.initialize_tables(engine)
         QueueMonitorProcessor.initialize_tables(engine)
+        OccupancyMonitorProcessor.initialize_tables(engine)
         
         logging.info("✅ PostgreSQL database connection successful.")
         return True
@@ -194,6 +196,9 @@ def start_streams():
         if 'Heatmap' in app_names:
             if model := load_model(APP_TASKS_CONFIG['Heatmap']['model_path']):
                 processors_to_add.append(HeatmapProcessor(link, channel_id, channel_name, model))
+        if 'OccupancyMonitor' in app_names:
+            if model := load_model(APP_TASKS_CONFIG['OccupancyMonitor']['model_path']):
+                processors_to_add.append(OccupancyMonitorProcessor(link, channel_id, channel_name, model, socketio, SessionLocal, send_telegram_notification))
 
         detection_tasks = []
         for app_name in app_names.intersection({'Shoplifting', 'QPOS', 'Generic'}):
@@ -315,7 +320,7 @@ def video_feed(app_name, channel_id):
         'PeopleCounter': PeopleCounterProcessor, 'QueueMonitor': QueueMonitorProcessor,
         'Security': SecurityProcessor, 'Heatmap': HeatmapProcessor,
         'ShutterMonitor': ShutterMonitorProcessor, 'KitchenCompliance': KitchenComplianceProcessor,
-        'Detection': DetectionProcessor
+        'Detection': DetectionProcessor, 'OccupancyMonitor': OccupancyMonitorProcessor
     }
     target_class = target_class_map.get(app_name)
     
@@ -328,14 +333,28 @@ def video_feed(app_name, channel_id):
             
             def gen_feed():
                 try:
+                    last_frame_time = 0
+                    target_fps = 25  # Reduced for better performance and lower latency
+                    frame_interval = 1.0 / target_fps
+                    
                     while not shutdown_event.is_set():
+                        current_time = time.time()
+                        # Frame rate limiting to prevent backlog
+                        if current_time - last_frame_time < frame_interval:
+                            time.sleep(0.005)  # Small sleep to prevent CPU spinning
+                            continue
+                        
                         frame_bytes = target_processor.get_frame()
                         if frame_bytes:
+                            last_frame_time = current_time
                             yield (b'--frame\r\n'
                                    b'Content-Type: image/jpeg\r\n'
                                    b'Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\n'
+                                   b'Pragma: no-cache\r\n'
+                                   b'X-Accel-Buffering: no\r\n'
                                    b'\r\n' + frame_bytes + b'\r\n')
-                        time.sleep(0.01)  # 100 FPS for smooth real-time streaming
+                        else:
+                            time.sleep(0.01)  # Wait if no frame available
                 except Exception as e:
                     logging.error(f"Error in video feed generator for {app_name}/{channel_id}: {e}")
             
@@ -414,8 +433,8 @@ def set_roi():
             return jsonify({"success": True})
         except Exception as e:
             db.rollback()
-            logging.error(f"Error saving ROI: {e}")
-            return jsonify({"error": "Database error"}), 500
+            logging.error(f"Error saving ROI: {e}", exc_info=True)
+            return jsonify({"error": f"Database error: {str(e)}"}), 500
 
 @app.route('/api/get_roi', methods=['GET'])
 def get_roi():
@@ -490,8 +509,8 @@ def set_counting_line():
             return jsonify({"success": True})
         except Exception as e:
             db.rollback()
-            logging.error(f"Error saving counting line: {e}")
-            return jsonify({"error": "Database error"}), 500
+            logging.error(f"Error saving counting line: {e}", exc_info=True)
+            return jsonify({"error": f"Database error: {str(e)}"}), 500
 
 @app.route('/report/<channel_id>/<date_str>')
 def get_report(channel_id, date_str):
