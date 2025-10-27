@@ -1,0 +1,88 @@
+╔══════════════════════════════════════════════════════════════════════╗
+║        SAKSHI-TEATOAST PROJECT - QUICK DEPLOYMENT GUIDE              ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+📦 GITHUB REPOSITORY:
+   https://github.com/abhi-20-25/Teatoast-Sakshi.git
+
+═══════════════════════════════════════════════════════════════════════
+
+🚀 INITIAL DEPLOYMENT (First Time Setup)
+
+1. CLONE REPOSITORY:
+   cd /home/ubuntu
+   git clone https://github.com/abhi-20-25/Teatoast-Sakshi.git
+   cd Teatoast-Sakshi
+
+2. CREATE CAMERA CONFIG:
+   nano config/rtsp_links.txt
+   # Add: CameraName,rtsp://user:pass@ip:port/stream
+
+3. INSTALL DEPENDENCIES:
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+
+4. START WITH DOCKER:
+   chmod +x docker-start.sh
+   ./docker-start.sh
+
+5. ACCESS APPLICATIONS:
+   Person Detection: http://server-ip:5000
+   Queue Monitor:    http://server-ip:5001
+   Occupancy Monitor: http://server-ip:5002
+
+═══════════════════════════════════════════════════════════════════════
+
+🔄 UPDATING CODE (Pull Latest Changes)
+
+   cd /home/ubuntu/Teatoast-Sakshi
+   ./docker-stop.sh
+   git pull origin main
+   docker-compose build
+   ./docker-start.sh
+
+═══════════════════════════════════════════════════════════════════════
+
+🛠️ COMMON COMMANDS
+
+View Status:     ./docker-status.sh
+View Logs:       ./docker-logs.sh
+Stop Services:   ./docker-stop.sh
+Start Services:  ./docker-start.sh
+Restart Service: docker-compose restart <service-name>
+
+═══════════════════════════════════════════════════════════════════════
+
+📊 SERVICE NAMES
+
+- person_detection
+- queue_monitor
+- occupancy_monitor
+
+═══════════════════════════════════════════════════════════════════════
+
+🔍 TROUBLESHOOTING
+
+Check Logs:         docker-compose logs -f <service-name>
+Rebuild Container:  docker-compose build <service-name>
+Restart All:        ./docker-stop.sh && ./docker-start.sh
+Check GPU:          nvidia-smi
+
+═══════════════════════════════════════════════════════════════════════
+
+📞 ONE-LINE DEPLOYMENT (if already set up):
+
+cd /home/ubuntu/Teatoast-Sakshi && git pull origin main && ./docker-stop.sh && docker-compose build && ./docker-start.sh
+
+═══════════════════════════════════════════════════════════════════════
+
+⚠️  IMPORTANT NOTES:
+
+- config/rtsp_links.txt must be created manually on server
+- Never commit RTSP credentials to GitHub
+- Ensure ports 5000, 5001, 5002 are open
+- GPU drivers required for optimal performance
+
+═══════════════════════════════════════════════════════════════════════
+
