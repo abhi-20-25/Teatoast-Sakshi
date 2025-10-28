@@ -109,29 +109,31 @@ def handle_detection(app_name, channel_id, frames, message, is_gif=False):
         else:
             frame_to_save = frames[0] if isinstance(frames, list) else frames
             cv2.imwrite(full_path, frame_to_save)
-        logging.info(f"Saved detection: {filename}")
+        logging.info(f"✅ Saved detection: {filename} ({os.path.getsize(full_path)} bytes)")
     except Exception as e:
-        logging.error(f"Failed to save media file '{full_path}': {e}")
+        logging.error(f"❌ Failed to save media file '{full_path}': {e}")
         return None
 
     # Save to database
     try:
         with SessionLocal() as db:
-            db.add(Detection(
+            detection_record = Detection(
                 app_name=app_name,
                 channel_id=channel_id,
                 timestamp=timestamp,
                 message=message,
                 media_path=media_path
-            ))
+            )
+            db.add(detection_record)
             db.commit()
+            logging.info(f"✅ Saved to DB: {app_name} detection (ID: {detection_record.id})")
     except Exception as e:
-        logging.error(f"Failed to save detection to DB: {e}")
+        logging.error(f"❌ Failed to save detection to DB: {e}")
 
     # Notify main app via API
     try:
         media_url = f"/{STATIC_FOLDER}/{media_path}".replace('\\', '/')
-        requests.post(
+        response = requests.post(
             f"{MAIN_APP_URL}/api/detection_event",
             json={
                 'app_name': app_name,
@@ -142,8 +144,9 @@ def handle_detection(app_name, channel_id, frames, message, is_gif=False):
             },
             timeout=5
         )
+        logging.info(f"✅ Notified main app: {response.status_code}")
     except Exception as e:
-        logging.warning(f"Failed to notify main app: {e}")
+        logging.warning(f"⚠️ Failed to notify main app: {e}")
 
     return media_path
 

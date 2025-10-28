@@ -69,44 +69,72 @@ class DetectionProcessor(threading.Thread):
                     cap = cv2.VideoCapture(self.rtsp_url)
                     continue
 
-            with self.lock:
-                self.latest_frame = frame.copy()
-
             current_time = time.time()
-
+            
+            # ALWAYS run detection and annotate for live feed
+            annotated_frame = frame.copy()
+            
             for task in self.tasks:
                 app_name = task['app_name']
-                if current_time - self.last_detection_times[app_name] < self.cooldown:
-                    continue
-
-                results = task['model'](frame, conf=task['confidence'], classes=task.get('target_class_id'), verbose=False)
-
-                if app_name == 'QPOS':
-                    self.qpos_persistence_tracker[self.channel_id] = [ts for ts in self.qpos_persistence_tracker[self.channel_id] if current_time - ts <= QPOS_TIME_THRESHOLD_SEC]
-                    if results and len(results[0].boxes) > 0:
-                        self.qpos_persistence_tracker[self.channel_id].append(current_time)
-                    
-                    if len(self.qpos_persistence_tracker[self.channel_id]) >= QPOS_DETECTION_THRESHOLD:
-                        self.last_detection_times[app_name] = current_time
-                        self.qpos_persistence_tracker[self.channel_id] = []
-                        annotated_frame = results[0].plot()
-                        self.detection_callback(app_name, self.channel_id, [annotated_frame], "QPOS Screen Off detected.", False)
                 
-                elif results and len(results[0].boxes) > 0:
-                    self.last_detection_times[app_name] = current_time
+                # Run model inference on every frame
+                results = task['model'](
+                    frame,
+                    conf=task['confidence'],
+                    classes=task.get('target_class_id'),
+                    verbose=False
+                )
+                
+                # Draw bounding boxes for live feed
+                if results and len(results[0].boxes) > 0:
                     annotated_frame = results[0].plot()
-                    detection_count = len(results[0].boxes)
                     
-                    if task.get('is_gif', False):
-                        gif_frames = [annotated_frame]
-                        # Capture subsequent frames for the GIF
-                        for _ in range(self.gif_duration_seconds * self.fps - 1):
-                            ret_gif, frame_gif = cap.read()
-                            if not ret_gif: break
-                            gif_frames.append(frame_gif.copy())
-                            time.sleep(1 / self.fps)
-                        self.detection_callback(app_name, self.channel_id, gif_frames, f"{app_name} detected ({detection_count} objects).", True)
-                    else:
-                        self.detection_callback(app_name, self.channel_id, [annotated_frame], f"{app_name} detected ({detection_count} objects).", False)
+                    # Only trigger detection callback if cooldown passed
+                    if current_time - self.last_detection_times[app_name] >= self.cooldown:
+                        self._trigger_detection_callback(
+                            app_name, results, annotated_frame, 
+                            current_time, task, cap
+                        )
+            
+            # Store annotated frame for live streaming
+            with self.lock:
+                self.latest_frame = annotated_frame.copy()
         
         cap.release()
+
+    def _trigger_detection_callback(self, app_name, results, annotated_frame, 
+                                    current_time, task, cap):
+        """Separate method for detection callbacks"""
+        self.last_detection_times[app_name] = current_time
+        detection_count = len(results[0].boxes)
+        
+        if app_name == 'QPOS':
+            self.qpos_persistence_tracker[self.channel_id] = [ts for ts in self.qpos_persistence_tracker[self.channel_id] if current_time - ts <= QPOS_TIME_THRESHOLD_SEC]
+            if results and len(results[0].boxes) > 0:
+                self.qpos_persistence_tracker[self.channel_id].append(current_time)
+            
+            if len(self.qpos_persistence_tracker[self.channel_id]) >= QPOS_DETECTION_THRESHOLD:
+                self.qpos_persistence_tracker[self.channel_id] = []
+                self.detection_callback(app_name, self.channel_id, [annotated_frame], "QPOS Screen Off detected.", False)
+        
+        elif task.get('is_gif', False):
+            gif_frames = [annotated_frame]
+            for _ in range(self.gif_duration_seconds * self.fps - 1):
+                ret_gif, frame_gif = cap.read()
+                if not ret_gif:
+                    break
+                # Annotate GIF frames too
+                gif_results = task['model'](frame_gif, conf=task['confidence'], 
+                                           classes=task.get('target_class_id'), 
+                                           verbose=False)
+                if gif_results and len(gif_results[0].boxes) > 0:
+                    gif_frames.append(gif_results[0].plot())
+                else:
+                    gif_frames.append(frame_gif.copy())
+                time.sleep(1 / self.fps)
+            
+            self.detection_callback(app_name, self.channel_id, gif_frames,
+                                   f"{app_name} detected ({detection_count} objects).", True)
+        else:
+            self.detection_callback(app_name, self.channel_id, [annotated_frame],
+                                   f"{app_name} detected ({detection_count} objects).", False)

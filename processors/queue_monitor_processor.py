@@ -198,6 +198,8 @@ class QueueMonitorProcessor(threading.Thread):
                 if is_in_secondary:
                     people_in_secondary_roi += 1
                     cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 255), 2) # Cyan for secondary ROI
+                    logging.debug(f"Person detected in counter area: track_id={track_id}, "
+                                 f"bbox=({x1},{y1},{x2},{y2})")
 
         valid_queue_count = 0
         for track_id in list(self.queue_tracker.keys()):
@@ -251,6 +253,13 @@ class QueueMonitorProcessor(threading.Thread):
                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
         cv2.putText(annotated_frame, f"Counter: {people_in_secondary_roi}", (15, 85), 
                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 0), 3)
+        
+        # Debug logging
+        logging.debug(f"{self.channel_name} - Queue: {self.current_queue_count}, "
+                     f"Counter: {people_in_secondary_roi}, "
+                     f"ROI valid: main={self.roi_poly.is_valid}, "
+                     f"secondary={self.secondary_roi_poly.is_valid}")
+        
         with self.lock:
             self.latest_frame = annotated_frame.copy()
 
