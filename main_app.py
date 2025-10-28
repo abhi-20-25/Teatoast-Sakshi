@@ -13,6 +13,7 @@ from flask import Flask, Response, render_template, jsonify, url_for, request
 from flask_socketio import SocketIO
 from sqlalchemy import create_engine, Column, Integer, String, Date, DateTime, Text, UniqueConstraint, text
 from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.exc import IntegrityError
 import logging
 import pytz
 import hashlib
@@ -117,6 +118,127 @@ def graceful_shutdown(signum=None, frame=None):
                 elif hasattr(processor, 'stop'): processor.stop()
     time.sleep(2)
 
+def verify_and_repair_database_schema(engine, SessionLocal):
+    """
+    Comprehensive database schema verification and auto-repair
+    Returns: (success: bool, issues_found: list, issues_fixed: list)
+    """
+    from sqlalchemy import inspect, Index, text
+    from sqlalchemy.exc import OperationalError, ProgrammingError
+    import time
+    
+    inspector = inspect(engine)
+    issues_found = []
+    issues_fixed = []
+    
+    # 1. Verify all required tables exist
+    required_tables = {
+        'detections': Detection,
+        'shutter_logs': ShutterLog,
+        'security_violations': SecurityViolation,
+        'roi_configs': RoiConfig,
+        'queue_logs': QueueLog,
+        'kitchen_violations': KitchenViolation,
+        'daily_footfall': DailyFootfall,
+        'hourly_footfall': HourlyFootfall,
+        'occupancy_logs': OccupancyLog,
+        'occupancy_schedules': OccupancySchedule
+    }
+    
+    existing_tables = inspector.get_table_names()
+    
+    for table_name, model_class in required_tables.items():
+        if table_name not in existing_tables:
+            issues_found.append(f"Missing table: {table_name}")
+            try:
+                model_class.__table__.create(engine)
+                issues_fixed.append(f"Created table: {table_name}")
+                logging.info(f"✅ Created missing table: {table_name}")
+            except Exception as e:
+                logging.error(f"❌ Failed to create table {table_name}: {e}")
+                return False, issues_found, issues_fixed
+    
+    # 2. Verify indexes on critical tables
+    critical_indexes = {
+        'detections': ['app_name', 'channel_id', 'timestamp'],
+        'queue_logs': ['channel_id', 'timestamp'],
+        'roi_configs': ['channel_id', 'app_name']
+    }
+    
+    for table, columns in critical_indexes.items():
+        if table in existing_tables:
+            existing_indexes = {idx['name']: idx['column_names'] 
+                              for idx in inspector.get_indexes(table)}
+            
+            for col in columns:
+                index_name = f"ix_{table}_{col}"
+                if index_name not in existing_indexes:
+                    issues_found.append(f"Missing index: {table}.{col}")
+                    try:
+                        with engine.connect() as conn:
+                            conn.execute(text(f"CREATE INDEX {index_name} ON {table} ({col})"))
+                            conn.commit()
+                        issues_fixed.append(f"Created index: {table}.{col}")
+                        logging.info(f"✅ Created index on {table}.{col}")
+                    except Exception as e:
+                        logging.warning(f"⚠️ Could not create index {table}.{col}: {e}")
+    
+    # 3. Verify unique constraints
+    try:
+        detections_constraints = inspector.get_unique_constraints('detections')
+        has_media_path_unique = any('media_path' in c['column_names'] 
+                                   for c in detections_constraints)
+        if not has_media_path_unique:
+            issues_found.append("Missing unique constraint on detections.media_path")
+            # Note: Adding unique constraint to existing table requires careful migration
+            logging.warning("⚠️ media_path unique constraint missing - may cause duplicates")
+    except Exception as e:
+        logging.warning(f"Could not verify constraints: {e}")
+    
+    # 4. Test database operations
+    try:
+        with SessionLocal() as db:
+            # Test query
+            test_query = db.query(Detection).limit(1).all()
+            # Test insert (with rollback)
+            test_detection = Detection(
+                app_name='_test',
+                channel_id='_test',
+                message='Schema verification test',
+                media_path=f'_test_{int(time.time())}.jpg'
+            )
+            db.add(test_detection)
+            db.flush()  # Test without committing
+            db.rollback()
+            logging.info("✅ Database operations test passed")
+    except Exception as e:
+        issues_found.append(f"Database operation test failed: {e}")
+        logging.error(f"❌ Database test failed: {e}")
+        return False, issues_found, issues_fixed
+    
+    return True, issues_found, issues_fixed
+
+def ensure_static_folders():
+    """Ensure all required static folders exist with proper permissions"""
+    required_folders = [
+        'static/detections',
+        'static/shutter_videos',
+        'static/heatmaps'
+    ]
+    
+    for folder in required_folders:
+        os.makedirs(folder, exist_ok=True)
+        # Verify write permissions
+        test_file = os.path.join(folder, '.write_test')
+        try:
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+            logging.info(f"✅ Folder verified: {folder}")
+        except Exception as e:
+            logging.error(f"❌ Cannot write to {folder}: {e}")
+            raise
+
 def initialize_database():
     global engine, SessionLocal
     try:
@@ -124,11 +246,29 @@ def initialize_database():
         SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         with engine.connect() as conn: conn.execute(text("SELECT 1"))
         
+        # Ensure static folders exist
+        ensure_static_folders()
+        
+        # Create all tables first
         Base.metadata.create_all(bind=engine)
         KitchenComplianceProcessor.initialize_tables(engine)
         PeopleCounterProcessor.initialize_tables(engine)
         QueueMonitorProcessor.initialize_tables(engine)
         OccupancyMonitorProcessor.initialize_tables(engine)
+        
+        # Verify and repair schema
+        success, issues_found, issues_fixed = verify_and_repair_database_schema(engine, SessionLocal)
+        
+        if success:
+            if issues_fixed:
+                logging.info(f"✅ Database schema verified and repaired. Fixed: {len(issues_fixed)} issues")
+                for issue in issues_fixed:
+                    logging.info(f"  - {issue}")
+            else:
+                logging.info("✅ Database schema verified - no issues found")
+        else:
+            logging.error(f"❌ Database schema verification failed. Issues: {issues_found}")
+            return False
         
         logging.info("✅ PostgreSQL database connection successful.")
         return True
@@ -465,41 +605,97 @@ def get_kitchen_history():
 
 @app.route('/api/set_roi', methods=['POST'])
 def set_roi():
-    data = request.json
-    channel_id, app_name, roi_points = data.get('channel_id'), data.get('app_name'), data.get('roi_points')
-    queue_settings = data.get('queue_settings')
-    
-    if not all([channel_id, app_name, isinstance(roi_points, dict)]):
-        return jsonify({"error": "Missing or invalid data"}), 400
-    
-    with SessionLocal() as db:
-        try:
-            stmt = text("""
-                INSERT INTO roi_configs (channel_id, app_name, roi_points) VALUES (:cid, :an, :rp)
-                ON CONFLICT (channel_id, app_name) DO UPDATE SET roi_points = EXCLUDED.roi_points;
-            """)
-            db.execute(stmt, {'cid': channel_id, 'an': app_name, 'rp': json.dumps(roi_points)})
-            
-            # Save queue settings if provided
-            if queue_settings:
-                db.execute(stmt, {'cid': channel_id, 'an': 'QueueSettings', 'rp': json.dumps(queue_settings)})
-            
-            db.commit()
-            
-            processors = stream_processors.get(channel_id, [])
-            if app_name == 'QueueMonitor':
-                for p in processors:
-                    if isinstance(p, QueueMonitorProcessor):
-                        p.update_roi(roi_points)
-                        if queue_settings and hasattr(p, 'update_settings'):
-                            p.update_settings(queue_settings)
-                        break
-            
-            return jsonify({"success": True})
-        except Exception as e:
-            db.rollback()
-            logging.error(f"Error saving ROI: {e}", exc_info=True)
-            return jsonify({"error": f"Database error: {str(e)}"}), 500
+    """Enhanced ROI save with detailed error reporting"""
+    try:
+        data = request.json
+        channel_id = data.get('channel_id')
+        app_name = data.get('app_name')
+        roi_points = data.get('roi_points')
+        queue_settings = data.get('queue_settings')
+        
+        # Validation
+        if not channel_id:
+            return jsonify({"error": "channel_id is required"}), 400
+        if not app_name:
+            return jsonify({"error": "app_name is required"}), 400
+        if not isinstance(roi_points, dict):
+            return jsonify({"error": "roi_points must be a dictionary"}), 400
+        
+        # Validate ROI structure
+        if 'main' in roi_points and not isinstance(roi_points['main'], list):
+            return jsonify({"error": "roi_points.main must be a list"}), 400
+        if 'secondary' in roi_points and not isinstance(roi_points['secondary'], list):
+            return jsonify({"error": "roi_points.secondary must be a list"}), 400
+        
+        with SessionLocal() as db:
+            try:
+                # Use SQLAlchemy ORM for better error handling
+                roi_record = db.query(RoiConfig).filter_by(
+                    channel_id=channel_id,
+                    app_name=app_name
+                ).first()
+                
+                if roi_record:
+                    roi_record.roi_points = json.dumps(roi_points)
+                    logging.info(f"Updating existing ROI for {channel_id}/{app_name}")
+                else:
+                    roi_record = RoiConfig(
+                        channel_id=channel_id,
+                        app_name=app_name,
+                        roi_points=json.dumps(roi_points)
+                    )
+                    db.add(roi_record)
+                    logging.info(f"Creating new ROI for {channel_id}/{app_name}")
+                
+                # Save queue settings if provided
+                if queue_settings:
+                    settings_record = db.query(RoiConfig).filter_by(
+                        channel_id=channel_id,
+                        app_name='QueueSettings'
+                    ).first()
+                    
+                    if settings_record:
+                        settings_record.roi_points = json.dumps(queue_settings)
+                    else:
+                        settings_record = RoiConfig(
+                            channel_id=channel_id,
+                            app_name='QueueSettings',
+                            roi_points=json.dumps(queue_settings)
+                        )
+                        db.add(settings_record)
+                    
+                    logging.info(f"Saved queue settings for {channel_id}")
+                
+                db.commit()
+                logging.info(f"✅ ROI saved successfully for {channel_id}/{app_name}")
+                
+                # Update live processor
+                processors = stream_processors.get(channel_id, [])
+                if app_name == 'QueueMonitor':
+                    for p in processors:
+                        if isinstance(p, QueueMonitorProcessor):
+                            p.update_roi(roi_points)
+                            if queue_settings and hasattr(p, 'update_settings'):
+                                p.update_settings(queue_settings)
+                            logging.info(f"✅ Updated live processor for {channel_id}")
+                            break
+                
+                return jsonify({"success": True, "message": "ROI saved successfully"})
+                
+            except IntegrityError as e:
+                db.rollback()
+                logging.error(f"❌ Database integrity error: {e}")
+                return jsonify({"error": f"Database constraint violation: {str(e)}"}), 409
+            except Exception as e:
+                db.rollback()
+                logging.error(f"❌ Error saving ROI: {e}", exc_info=True)
+                return jsonify({"error": f"Database error: {str(e)}"}), 500
+                
+    except json.JSONDecodeError as e:
+        return jsonify({"error": f"Invalid JSON in roi_points: {str(e)}"}), 400
+    except Exception as e:
+        logging.error(f"❌ Unexpected error in set_roi: {e}", exc_info=True)
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 @app.route('/api/get_roi', methods=['GET'])
 def get_roi():
@@ -919,18 +1115,60 @@ def telegram_notification_api():
 
 @app.route('/api/handle_detection', methods=['POST'])
 def handle_detection_api():
-    """Handle detection requests from processor microservices"""
+    """
+    Handle detection requests from processor microservices
+    Supports two modes:
+    1. Metadata-only (screenshot already saved by microservice)
+    2. Frame data included (decode and save)
+    """
     try:
         data = request.json
         app_name = data.get('app_name')
         channel_id = data.get('channel_id')
         message = data.get('message')
+        media_path = data.get('media_path')  # If already saved
+        frame_base64 = data.get('frame_data')  # If needs saving
         is_gif = data.get('is_gif', False)
-        # Note: In microservice architecture, processors handle their own media saving
-        # This endpoint is for fallback/coordination purposes
+        
+        # Mode 1: Frame data provided - save it
+        if frame_base64 and not media_path:
+            import base64
+            timestamp = datetime.now(IST)
+            ts_string = timestamp.strftime("%Y%m%d_%H%M%S")
+            filename = f"{app_name}_{channel_id}_{ts_string}.{'gif' if is_gif else 'jpg'}"
+            media_path = os.path.join(DETECTIONS_SUBFOLDER, filename)
+            full_path = os.path.join(STATIC_FOLDER, media_path)
+            
+            try:
+                frame_bytes = base64.b64decode(frame_base64)
+                with open(full_path, 'wb') as f:
+                    f.write(frame_bytes)
+                logging.info(f"✅ Decoded and saved frame: {filename}")
+            except Exception as e:
+                logging.error(f"❌ Failed to decode/save frame: {e}")
+                return jsonify({"error": str(e)}), 500
+        
+        # Mode 2: Media path provided - verify it exists
+        elif media_path:
+            full_path = os.path.join(STATIC_FOLDER, media_path)
+            if not os.path.exists(full_path):
+                logging.warning(f"⚠️ Media file not found: {full_path}")
+        
+        # Emit SocketIO event for real-time frontend update
+        media_url = f"/static/{media_path}".replace('\\', '/')
+        socketio.emit('new_detection', {
+            'app_name': app_name,
+            'channel_id': channel_id,
+            'timestamp': data.get('timestamp', datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")),
+            'message': message,
+            'media_url': media_url
+        })
+        
+        logging.info(f"✅ Emitted SocketIO event for {app_name} detection")
         return jsonify({"success": True}), 200
+        
     except Exception as e:
-        logging.error(f"Error handling detection: {e}")
+        logging.error(f"❌ Error handling detection: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 def save_periodic_heatmap_snapshots():

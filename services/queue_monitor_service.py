@@ -45,6 +45,15 @@ class RoiConfig(Base):
     app_name = Column(String, index=True)
     roi_points = Column(Text)
 
+class Detection(Base):
+    __tablename__ = "detections"
+    id = Column(Integer, primary_key=True, index=True)
+    app_name = Column(String, index=True)
+    channel_id = Column(String, index=True)
+    timestamp = Column(DateTime)
+    message = Column(Text)
+    media_path = Column(String, unique=True)
+
 def get_stable_channel_id(link):
     """Generate stable channel ID from RTSP link"""
     return f"cam_{hashlib.md5(link.encode()).hexdigest()[:10]}"
@@ -81,20 +90,79 @@ def load_model(model_path):
         return None
 
 def handle_detection(app_name, channel_id, frames, message, is_gif=False):
-    """Forward detection to main app"""
+    """
+    Enhanced detection handler with local save + database + notification
+    """
+    import cv2
+    import os
+    from datetime import datetime
+    import pytz
+    
+    IST = pytz.timezone('Asia/Kolkata')
+    STATIC_FOLDER = '/app/static'
+    DETECTIONS_SUBFOLDER = 'detections'
+    
+    timestamp = datetime.now(IST)
+    ts_string = timestamp.strftime("%Y%m%d_%H%M%S")
+    filename = f"{app_name}_{channel_id}_{ts_string}.jpg"  # Queue monitor uses JPG
+    media_path = os.path.join(DETECTIONS_SUBFOLDER, filename)
+    full_path = os.path.join(STATIC_FOLDER, media_path)
+    
+    # 1. Save screenshot locally
     try:
-        requests.post(
-            f"{MAIN_APP_URL}/api/handle_detection",
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        frame_to_save = frames[0] if isinstance(frames, list) else frames
+        success = cv2.imwrite(full_path, frame_to_save)
+        
+        if not success:
+            logging.error(f"❌ cv2.imwrite failed for {full_path}")
+            return None
+        
+        logging.info(f"✅ Saved screenshot: {filename}")
+    except Exception as e:
+        logging.error(f"❌ Failed to save screenshot '{full_path}': {e}")
+        return None
+    
+    # 2. Save to database
+    try:
+        with SessionLocal() as db:
+            detection_record = Detection(
+                app_name=app_name,
+                channel_id=channel_id,
+                timestamp=timestamp,
+                message=message,
+                media_path=media_path
+            )
+            db.add(detection_record)
+            db.commit()
+            logging.info(f"✅ Saved to database: {app_name} detection")
+    except Exception as e:
+        logging.error(f"❌ Failed to save to database: {e}")
+        # Continue even if DB save fails - we have the screenshot
+    
+    # 3. Notify main app for SocketIO broadcast
+    try:
+        media_url = f"/static/{media_path}".replace('\\', '/')
+        response = requests.post(
+            f"{MAIN_APP_URL}/api/detection_event",
             json={
                 'app_name': app_name,
                 'channel_id': channel_id,
+                'timestamp': timestamp.strftime("%Y-%m-%d %H:%M:%S"),
                 'message': message,
-                'is_gif': is_gif
+                'media_url': media_url
             },
             timeout=5
         )
+        
+        if response.status_code == 200:
+            logging.info(f"✅ Notified main app for SocketIO broadcast")
+        else:
+            logging.warning(f"⚠️ Main app notification failed: {response.status_code}")
     except Exception as e:
-        logging.warning(f"Failed to forward detection: {e}")
+        logging.warning(f"⚠️ Failed to notify main app: {e}")
+    
+    return media_path
 
 def send_telegram_notification(message):
     """Send telegram via main app"""
@@ -178,15 +246,37 @@ def main():
                     
                     # Load ROI configuration if exists
                     with SessionLocal() as db:
+                        # Load ROI
                         roi_record = db.query(RoiConfig).filter_by(
                             channel_id=channel_id, app_name='QueueMonitor'
                         ).first()
+                        
                         if roi_record:
                             try:
-                                processor.update_roi(json.loads(roi_record.roi_points))
-                                logging.info(f"Loaded ROI for {channel_name}")
-                            except json.JSONDecodeError:
-                                logging.error(f"Could not parse ROI for {channel_name}")
+                                roi_data = json.loads(roi_record.roi_points)
+                                processor.update_roi(roi_data)
+                                logging.info(f"✅ Loaded ROI for {channel_name}: "
+                                            f"main={len(roi_data.get('main', []))} points, "
+                                            f"secondary={len(roi_data.get('secondary', []))} points")
+                            except json.JSONDecodeError as e:
+                                logging.error(f"❌ Invalid ROI JSON for {channel_name}: {e}")
+                        else:
+                            logging.warning(f"⚠️ No ROI configured for {channel_name}")
+                        
+                        # Load queue settings
+                        settings_record = db.query(RoiConfig).filter_by(
+                            channel_id=channel_id, app_name='QueueSettings'
+                        ).first()
+                        
+                        if settings_record:
+                            try:
+                                settings = json.loads(settings_record.roi_points)
+                                processor.update_settings(settings)
+                                logging.info(f"✅ Loaded queue settings for {channel_name}: {settings}")
+                            except json.JSONDecodeError as e:
+                                logging.error(f"❌ Invalid settings JSON for {channel_name}: {e}")
+                        else:
+                            logging.info(f"Using default queue settings for {channel_name}")
                     
                     processor.start()
                     processors.append(processor)
