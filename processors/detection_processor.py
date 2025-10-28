@@ -57,7 +57,7 @@ class DetectionProcessor(threading.Thread):
         is_file = any(self.rtsp_url.lower().endswith(ext) for ext in ['.mp4', '.avi', '.mov'])
         
         last_inference_time = 0
-        inference_interval = 0.2  # 5 FPS inference for performance
+        inference_interval = 0.1  # 10 FPS inference for better detection capture
         
         while self.is_running:
             ret, frame = cap.read()
@@ -93,16 +93,18 @@ class DetectionProcessor(threading.Thread):
                     # Cache boxes and trigger callbacks
                     if results and len(results[0].boxes) > 0:
                         self.cached_boxes[app_name] = results[0].boxes
+                        logging.debug(f"DetectionProcessor {self.channel_name}: {app_name} detected {len(results[0].boxes)} objects")
                         
                         if current_time - self.last_detection_times[app_name] >= self.cooldown:
+                            logging.info(f"DetectionProcessor {self.channel_name}: Triggering detection callback for {app_name}")
                             annotated_frame = results[0].plot()
                             self._trigger_detection_callback(
                                 app_name, results, annotated_frame, 
                                 current_time, task, cap
                             )
-                    else:
-                        # Clear cached boxes if no detection
-                        self.cached_boxes[app_name] = None
+                        else:
+                            logging.debug(f"DetectionProcessor {self.channel_name}: {app_name} detection in cooldown, skipping callback")
+                    # Note: Don't clear cached boxes - keep them for smooth display
             
             # Draw cached boxes on current frame for live feed
             display_frame = self._draw_cached_boxes(frame)

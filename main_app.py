@@ -346,6 +346,7 @@ def start_streams():
             if 'model_path' in config and (model := load_model(config['model_path'])):
                 detection_tasks.append({'app_name': app_name, 'model': model, **config})
         if detection_tasks:
+            logging.info(f"Creating DetectionProcessor for {channel_name} with {len(detection_tasks)} tasks")
             processors_to_add.append(DetectionProcessor(link, channel_id, channel_name, detection_tasks, handle_detection))
 
         for p in processors_to_add:
@@ -364,6 +365,7 @@ def send_telegram_notification(message):
         logging.error(f"Error sending Telegram notification: {e}")
 
 def handle_detection(app_name, channel_id, frames, message, is_gif=False):
+    logging.info(f"handle_detection called: {app_name} on {channel_id} - {message}")
     timestamp = datetime.now(IST)
     ts_string = timestamp.strftime("%Y%m%d_%H%M%S")
     filename = f"{app_name}_{channel_id}_{ts_string}.{'gif' if is_gif else 'jpg'}"
